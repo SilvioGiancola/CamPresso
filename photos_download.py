@@ -3,7 +3,7 @@
 Runs in a cancellable subprocess; downloads publish outside Photos only after
 validation. Library scanning itself never initiates any downloads.
 """
-import os, subprocess, sys, tempfile, time, json, queue, threading, math
+import os, subprocess, sys, tempfile, time, json, queue, threading, math, shutil
 from pathlib import Path
 from dataclasses import replace
 from photos_catalog import ScanCancelled, copy_video, ensure_outside_library
@@ -106,6 +106,8 @@ def fetch_video(media,destination,library,cancel,report=lambda s:None,runner=wai
         return copy_video(media,destination,library,cancel,report)
     if cancel.is_set():raise ScanCancelled()
     dest=ensure_outside_library(destination,library);dest.mkdir(parents=True,exist_ok=True)
+    if media.size and shutil.disk_usage(dest).free < media.size*2 + 256*1024**2:
+        raise RuntimeError('Not enough local storage to download and save this original. Free space and retry.')
     with tempfile.TemporaryDirectory(prefix='.videoqueue-download-',dir=dest) as temp:
         stage=Path(temp)
         if runner is wait_process and cli is None:details=resource_download(media,library,stage,cancel,report)

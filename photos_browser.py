@@ -4,7 +4,7 @@ from pathlib import Path
 import tkinter as tk
 from dataclasses import replace
 from tkinter import ttk, filedialog, messagebox
-from photos_catalog import scan_library, view, format_size, ScanCancelled
+from photos_catalog import scan_library, view, format_size, format_duration, ScanCancelled
 from photos_download import fetch_video
 from photos_previews import PreviewStore, ThumbnailStore
 from photos_gallery import ThumbnailGallery
@@ -57,7 +57,8 @@ class PhotosBrowser:
         self.scanbtn=ttk.Button(top,text='Scan',command=self.scan);self.scanbtn.pack(side='left',padx=2)
         self.cancelbtn=ttk.Button(top,text='Cancel',command=lambda:self.cancel.set(),state='disabled');self.cancelbtn.pack(side='left')
         filters=ttk.Frame(frame);filters.pack(fill='x',pady=4)
-        combo=ttk.Combobox(filters,textvariable=self.kind,values=['All','Photos','Videos'],state='readonly',width=8);combo.pack(side='left')
+        combo=ttk.Combobox(filters,textvariable=self.kind,values=['All','Photos','Videos'],state='readonly',width=8)
+        if not controller:combo.pack(side='left')
         combo.bind('<<ComboboxSelected>>',lambda e:self.apply())
         ttk.Label(filters,text='Search').pack(side='left',padx=(6,0))
         ttk.Entry(filters,textvariable=self.search).pack(side='left',fill='x',expand=True,padx=4)
@@ -89,7 +90,7 @@ class PhotosBrowser:
         sortbox.bind('<<ComboboxSelected>>',lambda event:self.sort_gallery())
         ttk.Checkbutton(views,text='Descending',variable=self.reverse,command=self.sort_gallery).pack(side='left',padx=4)
         holder=ttk.Frame(frame);holder.pack(fill='both',expand=True,pady=4)
-        self.columns=[('name','Filename',260),('download','Download',150),('conversion','Conversion',165),('photos','Photos',270),('kind','Media',60),('size','Original size ↕',110),('pixels','Resolution ↕',130),('date','Taken',175)]
+        self.columns=[('name','Filename',260),('download','Download',150),('conversion','Status',165),('photos','Library size reduction',270),('duration','Duration',85),('kind','Media',60),('size','Original size ↕',110),('pixels','Resolution ↕',130),('date','Taken',175)]
         self.tree=ttk.Treeview(holder,columns=[k for k,_,_ in self.columns],show='headings',selectmode='extended')
         for key,label,width in self.columns:
             self.tree.heading(key,text=label,command=(lambda:None) if key in ('download','conversion','photos') else lambda k=key:self.order(k));self.tree.column(key,width=width,minwidth=45,stretch=key=='name')
@@ -109,8 +110,8 @@ class PhotosBrowser:
         controls=ttk.Frame(frame);controls.pack(fill='x',pady=(4,2));self.controls=controls
         self.previewbtn=ttk.Button(controls,text='Download & view',command=self.preview_selected,state='disabled');self.previewbtn.pack(side='left')
         self.copybtn=ttk.Button(controls,text='Send to conversion →' if embedded else 'Copy selected → queue',command=self.enqueue_selected if embedded else self.copy_selected,state='disabled');self.copybtn.pack(side='right')
-        if controller:self.copybtn.configure(text='Convert selected')
-        self.status=tk.StringVar(value='Scan the library · Download and play · Convert · Send to Photos.\nThe library path is remembered when you reopen.')
+        if controller:self.copybtn.configure(text='Compress')
+        self.status=tk.StringVar(value='Scan your library → Compress → Review → Replace in Photos.\nThe library path is remembered when you reopen.')
         status_area=ttk.Frame(frame,height=38);status_area.pack(fill='x',pady=(2,0));status_area.pack_propagate(False)
         self.status_label=ttk.Label(status_area,textvariable=self.status,wraplength=650);self.status_label.pack(fill='x',anchor='nw')
         def wrap_text(event):
@@ -172,7 +173,10 @@ class PhotosBrowser:
         self.gallery.redraw()
         for iid in self.tree.get_children():
             media=self.filtered[int(iid)]
-            if key is None or self.transfer_key(media)==key:self.tree.set(iid,'download',self.download_status(media)[0])
+            if key is None or self.transfer_key(media)==key:
+                self.tree.set(iid,'download',self.download_status(media)[0])
+                conversion,reduction=self.workflow_status(media)
+                self.tree.set(iid,'conversion',conversion);self.tree.set(iid,'photos',reduction)
         self.update_preview_button()
         if self.controller:self.controller.update_actions()
 
@@ -241,7 +245,7 @@ class PhotosBrowser:
         except ValueError as e:self.status.set(str(e));return
         self.page=0;self.render()
     def reset(self):
-        self.kind.set('All');self.search.set('')
+        self.kind.set('Videos' if self.controller else 'All');self.search.set('')
         for var in self.minimum.values():var.set('')
         self.apply()
     def search_changed(self,*args):
@@ -276,7 +280,7 @@ class PhotosBrowser:
             resolution=f'{r.width} × {r.height}' if r.width and r.height else 'Unknown'
             conversion,photos=self.workflow_status(r)
             name=('♥ ' if r.favorite else '')+r.name
-            self.tree.insert('', 'end',iid=iid,values=(name,self.download_status(r)[0],conversion,photos,r.kind,format_size(r.size),resolution,r.date))
+            self.tree.insert('', 'end',iid=iid,values=(name,self.download_status(r)[0],conversion,photos,format_duration(r.duration),r.kind,format_size(r.size),resolution,r.date))
         self.tree.selection_set(selection)
         self.gallery.set_rows([(iid,self.available_media(row) or row) for iid,row in rows],self.actual_library,preserve=preserve)
         pages=max(1,(len(self.filtered)+self.PAGE_SIZE-1)//self.PAGE_SIZE)
@@ -294,6 +298,7 @@ class PhotosBrowser:
         available=len(selected)==1 and self.available_media(selected[0]) if valid else None
         label='Download selected' if len(selected)>1 else 'Play original' if cached or available else 'Download & play original'
         if self.task=='download' and not cached and not available:label='Queue downloads' if len(selected)>1 else 'Queue download & play'
+        if self.controller:label='Play original';valid=valid and len(selected)==1
         self.previewbtn.configure(text=label,state='normal' if valid and self.can_download() else 'disabled')
         ready=self.task in (None,'download') and bool(selected) and all(r.kind=='Video' and self.available_media(r) for r in selected)
         self.copybtn.configure(state='normal' if ready and not self.closing else 'disabled')
@@ -307,6 +312,9 @@ class PhotosBrowser:
             self.status.set(f'{len(selected)} selected · {r.name}\n'+('Downloaded preview ready to play.' if ready else 'Local original available.' if r.local else 'iCloud original will download when you preview or convert.'))
         if self.controller:self.controller.selection_detail()
     def preview_selected(self):
+        if self.controller:
+            _,job=self.controller.selected_job()
+            if job and job.get('replacement_complete'):self.controller.view_converted();return
         if not self.can_download():return
         selected=self.selected()
         if not selected or any(row.kind!='Video' for row in selected):self.status.set('Select videos to download or view.');return
@@ -364,6 +372,7 @@ class PhotosBrowser:
         selected=[r for r in self.selected() if r.kind=='Video']
         if not selected:self.status.set('Select videos first.');return
         if self.task not in (None,'download') or self.closing:return
+        if self.controller:self.on_queue(selected,self.actual_library);return
         ready=[self.available_media(r) for r in selected]
         if any(r is None for r in ready):self.status.set('Download the selected videos before sending them to conversion.');return
         self.on_queue(ready,self.actual_library)
@@ -436,13 +445,13 @@ class PhotosBrowser:
                 elif e[0]=='downloads_finished':
                     self.transfers.clear();self.downloading=None;self.download_keys.clear();self.download_names.clear();self.play_requests.clear();self.set_busy(False)
                     if not self.closing:self.render(preserve=True)
-                    self.status.set(f'{e[1]} videos ready. Play original or Convert selected.'+(' Download stopped.' if e[3] else '')+(' Some downloads failed; successful videos remain available.' if e[2] else ''))
+                    self.status.set(f'{e[1]} originals prepared. Compression continues automatically for queued videos.'+(' Download stopped.' if e[3] else '')+(' Some downloads failed; successful videos remain available.' if e[2] else ''))
                     if e[2] and not self.closing:messagebox.showerror('Download issues','\n\n'.join(e[2][:8])+(f'\n\n{len(e[2])-8} more issues are recorded in the log.' if len(e[2])>8 else ''),parent=self.win)
                 elif e[0]=='scanned':
                     self.catalog_rows=e[1];self.actual_library=e[2];self.library.set(e[2]);self.set_busy(False)
                     if self.controller:self.controller.refresh(True)
                     else:self.rebuild_catalog()
-                    self.status.set(f'{len(self.rows):,} videos/assets · {Path(e[2]).name}\nSelect a video to play, convert, send to Photos or remove a version.')
+                    self.status.set(f'{len(self.rows):,} videos/assets · {Path(e[2]).name}\nCompress selected videos, review the results, then Replace in Photos.')
                 elif e[0]=='copied':
                     self.on_queue(e[1]);self.set_busy(False)
                     self.status.set(f'{len(e[1])} original videos downloaded/copied and queued. Photos originals unchanged.'+(' Download/copy cancelled.' if e[3] else '')+(' Issues: '+'; '.join(e[2]) if e[2] else ''))

@@ -13,17 +13,19 @@ class StorageLock:
         fcntl.flock(self.handle.fileno(),fcntl.LOCK_UN);self.handle.close()
 
 def clean_storage(data,jobs,delete_unsent=False):
-    data=Path(data).expanduser().resolve();errors=[];removed=set();protected=set();outputs=set();roots={data/'Previews',data/'Thumbnails',data/'Converted previews',data/'Temporary work'/'Original backups',data/'Photos work'/'Original backups'}
+    data=Path(data).expanduser().resolve();errors=[];removed=set();protected=set();outputs=set();roots={data/'Previews',data/'Thumbnails',data/'Converted previews',data/'Temporary work'/'Original backups',data/'Photos work'/'Original backups',data/'Workflow'}
     def canonical(value):return Path(os.path.abspath(Path(value).expanduser())) if value else None
     def safe_path(path):
         return not any(part.lower().endswith('.photoslibrary') for part in path.parts) and not any(parent.is_symlink() for parent in (path,*path.parents))
     for job in jobs:
+        protected.update(canonical(path) for path in job.get('retained_outputs',[]) if path)
         media=job.get('media');backup=canonical(job.get('backup'))
         if media and backup and backup.parent.parent.name=='Original backups' and backup.parent.parent.parent.name in ('Video Queue Work','Photos work','Temporary work'):
             roots.add(backup.parent.parent)
         if not media and job.get('path'):protected.add(canonical(job['path']))
         uncertain=not job.get('retry_safe',True)
-        if media and (job.get('original_removed') or uncertain):
+        recovery=uncertain or bool(job.get('original_removed') and not job.get('replacement_complete'))
+        if media and recovery:
             usable=False
             if backup:
                 protected.add(backup)
@@ -33,7 +35,7 @@ def clean_storage(data,jobs,delete_unsent=False):
             if not usable and media.path:protected.add(canonical(media.path))
         output=canonical(job.get('output'))
         if output:outputs.add(output)
-        if output and (uncertain or (job.get('converted_removed') or not job.get('verified')) and not delete_unsent):protected.add(output)
+        if output and (recovery or (job.get('converted_removed') or not job.get('verified')) and not delete_unsent):protected.add(output)
     def remove_tree(path):
         if path in protected or path in outputs:return
         if not safe_path(path):errors.append(f'Kept unexpected symbolic link or Photos library: {path}');return
@@ -68,6 +70,12 @@ def clean_storage(data,jobs,delete_unsent=False):
         if output in removed:
             job.update(output=None,output_fingerprint=None,local_output_cleared=True)
             if not job.get('verified'):
-                job.update(converted=False,expected=None,state='Waiting',progress='')
+                job.update(converted=False,expected=None,result_size=None,state='Ready',progress='',replacement_approval=None)
         job['cleanup_retained']=bool((canonical(job.get('backup')) in protected and job.get('backup')) or (canonical(job.get('output')) in protected and not job.get('retry_safe',True)))
+        retained={path for path in (canonical(job.get('backup')),canonical(job.get('output'))) if path and path in protected}
+        job['recovery_bytes']=0
+        for path in retained:
+            try:job['recovery_bytes']+=path.stat().st_size
+            except OSError:pass
+        job['cleanup_reason']='Unresolved Photos operation or missing replacement; local recovery copies retained.' if job['cleanup_retained'] else ''
     return errors

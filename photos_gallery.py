@@ -3,7 +3,7 @@ import math, threading
 from concurrent.futures import ThreadPoolExecutor
 import tkinter as tk
 from tkinter import ttk
-from photos_catalog import ScanCancelled, format_size
+from photos_catalog import ScanCancelled, format_size, format_duration
 
 class ThumbnailGallery(ttk.Frame):
     TILE_WIDTH=216;TILE_HEIGHT=182;GAP=8
@@ -71,7 +71,7 @@ class ThumbnailGallery(ttk.Frame):
             name=media.name if len(media.name)<=29 else media.name[:26]+'…'
             self.canvas.create_text(x+6,y+115,text=name,anchor='w',fill='#202934',font=('Helvetica',10))
             resolution=f'{media.width}×{media.height}' if media.width and media.height else 'Unknown size'
-            self.canvas.create_text(x+6,y+130,text=f'{format_size(media.size)} · {resolution}',anchor='w',fill='#65717d',font=('Helvetica',9))
+            self.canvas.create_text(x+6,y+130,text=f'{format_size(media.size)} · {format_duration(media.duration)}' if media.kind=='Video' else f'{format_size(media.size)} · {resolution}',anchor='w',fill='#65717d',font=('Helvetica',9))
             if media.kind=='Video' and self.workflow:
                 conversion,photos=self.workflow(media)
                 self.canvas.create_text(x+6,y+148,text=conversion,anchor='w',fill='#156da5',font=('Helvetica',9,'bold'))

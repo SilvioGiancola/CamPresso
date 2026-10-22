@@ -24,6 +24,7 @@ class Media:
     edited: bool = False
     thumbnail: str | None = None
     favorite: bool = False
+    duration: float | None = None
 
     @property
     def pixels(self):
@@ -55,7 +56,20 @@ def media_from_photo(photo):
                  date=photo.date.isoformat(timespec='seconds') if photo.date else '',
                  path=str(path) if path else None, local=bool(path),
                  live=bool(photo.live_photo), edited=bool(photo.hasadjustments),thumbnail=thumbnail,
-                 favorite=bool(getattr(photo,'favorite',False)))
+                 favorite=bool(getattr(photo,'favorite',False)),
+                 duration=video_duration(getattr(getattr(photo,'exif_info',None),'duration',None)))
+
+def video_duration(value):
+    import math
+    try:
+        result=float(value)
+        return result if math.isfinite(result) and result>0 else None
+    except (TypeError,ValueError):return None
+
+def format_duration(value):
+    if value is None:return '—'
+    seconds=int(value);minutes,seconds=divmod(seconds,60);hours,minutes=divmod(minutes,60)
+    return f'{hours}:{minutes:02d}:{seconds:02d}' if hours else f'{minutes}:{seconds:02d}'
 
 def resolve_library(library):
     if not library:return None
@@ -127,6 +141,8 @@ def copy_video(media, destination, library, cancel=None, report=None):
     if cancel.is_set():raise ScanCancelled()
     dest=ensure_outside_library(destination,library);dest.mkdir(parents=True,exist_ok=True)
     before=source.stat()
+    if shutil.disk_usage(dest).free < before.st_size + 256*1024**2:
+        raise RuntimeError('Not enough local storage to download this original. Free space and retry.')
     filename=re.sub(r'[/\\\x00-\x1f]', '_', media.name).strip() or 'video'
     if filename in ('.','..'):filename='video'
     name=Path(filename)

@@ -139,6 +139,7 @@ def workflow(request,adapter,journal,checkpoint=lambda:None):
         if backup.is_symlink() or any(part.lower().endswith('.photoslibrary') for part in backup.resolve().parts):raise RuntimeError('An independent backup outside Photos is required. Original kept.')
         check_file(backup,request.get('backup_fingerprint'),'Original backup')
         if output.stat().st_size>=backup.stat().st_size:raise RuntimeError('Converted video is not smaller. Original kept.')
+        if request.get('original_expected'):verify_asset(old,request['original_expected'],adapter)
     if request['action']=='remove':
         if not request.get('new_uuid') or request['new_uuid'].split('/')[0].upper()==request['uuid'].split('/')[0].upper():
             raise RuntimeError('A separate verified converted asset is required before removal.')
@@ -196,7 +197,7 @@ def main():
         checkpoint()
     try:
         request=json.load(sys.stdin);target=Path(request['journal'])
-        journal.update({key:request.get(key) for key in ('action','library','uuid','new_uuid','output','backup','remove','expected','output_fingerprint','backup_fingerprint')})
+        journal.update({key:request.get(key) for key in ('action','library','uuid','new_uuid','output','backup','remove','expected','original_expected','output_fingerprint','backup_fingerprint')})
         journal['phase']='Checking Photos access';checkpoint()
         if request.get('action') not in ('check','finish','remove','verify','inspect','delete_original','delete_converted'):raise RuntimeError('Unknown Photos action.')
         result=workflow(request,Actions(request.get('library'),created),journal,checkpoint)

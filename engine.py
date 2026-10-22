@@ -5,6 +5,10 @@ from quicktime_tracks import restore_track_dates, metadata_mismatches
 
 class Cancelled(Exception): pass
 
+class Skipped(RuntimeError):
+    """A valid input that this compression workflow deliberately leaves alone."""
+    pass
+
 class Converter:
     def __init__(self):
         self.cancel = threading.Event()
@@ -77,7 +81,7 @@ class Converter:
             report(state,progress)
         try:
             return self._convert(source,settings,staged_report)
-        except Cancelled:raise
+        except (Cancelled, Skipped):raise
         except Exception as exc:
             raise RuntimeError(f'Failed during: {phase}\n\n{exc}\n\nOriginal file was not replaced.') from exc
 
@@ -95,9 +99,9 @@ class Converter:
         video = next((s for s in info['streams'] if s['codec_type'] == 'video' and not s.get('disposition', {}).get('attached_pic')), None)
         if not video: raise RuntimeError('No video stream found.')
         if video.get('color_transfer') in ('smpte2084', 'arib-std-b67'):
-            raise RuntimeError('HDR video requires a dedicated color conversion. This version supports SDR videos only; original kept.')
+            raise Skipped('HDR video is not supported yet. Original kept in Photos.')
         if video.get('sample_aspect_ratio') not in (None, 'N/A', '0:1', '1:1'):
-            raise RuntimeError('Anamorphic video is not supported in this version. Original kept.')
+            raise Skipped('Anamorphic video is not supported. Original kept.')
         duration = float(info['format'].get('duration', 0))
         if not math.isfinite(duration) or duration<=0:raise RuntimeError('Video duration is missing or invalid. Original kept.')
         before = self.metadata(source)
@@ -116,6 +120,8 @@ class Converter:
         crf = {'High':20, 'Balanced':24, 'Small':28}[settings['quality']]
         if codec == 'H.264': crf -= 2
         folder.mkdir(parents=True, exist_ok=True)
+        if shutil.disk_usage(folder).free < initial.st_size + 256 * 1024**2:
+            raise RuntimeError('Not enough free space for compression. Free local storage and retry; original kept.')
         fd, tempname = tempfile.mkstemp(prefix='.videoqueue-', suffix=extension, dir=folder)
         os.close(fd)
         temp = Path(tempname)
@@ -161,6 +167,8 @@ class Converter:
                 raise RuntimeError('Original changed during conversion. Replacement cancelled.')
             report('Saving result', 99)
             outputsize = temp.stat().st_size
+            if settings.get('require_smaller') and outputsize >= initial.st_size:
+                raise Skipped('The compressed video is not smaller. Original kept in Photos.')
             if settings['replace']:
                 if outputsize >= initial.st_size:
                     raise RuntimeError('Converted file is not smaller. Original kept; try Small quality.')

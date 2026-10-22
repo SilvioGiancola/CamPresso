@@ -1,6 +1,5 @@
 """Photos Services handoff: exact selected IDs, queued into the existing GUI."""
 import json, re, subprocess, sys, threading, time, uuid
-from dataclasses import replace
 from pathlib import Path
 from state_store import StateFile
 from photos_catalog import media_from_photo, resolve_library, ScanCancelled
@@ -71,7 +70,7 @@ def load_selection(request,cancel):
 
 class PhotosService:
     def __init__(self,app):
-        self.app=app;self.directory=app.data/'Requests';self.path=None;self.last_check=0;self.ignored=set();self.auto_convert=True;self.pending=set();self.download_errors=[]
+        self.app=app;self.directory=app.data/'Requests';self.path=None;self.last_check=0;self.ignored=set()
         if self.directory.is_dir():
             for path in self.directory.glob('*.running'):
                 if not path.is_symlink():
@@ -94,7 +93,7 @@ class PhotosService:
             request['preferred_library']=app.browser.library.get().strip() or app.browser.actual_library
             request['saved_library']=app.browser.saved_preferences.get('library')
             self.path=path.with_suffix('.running');path.rename(self.path)
-            app.runner=JobRunner(app.data/'Temporary work');runner=app.runner;app.pause_requested=False;self.auto_convert=True;app.current=None;app.set_active(True)
+            app.runner=JobRunner(app.data/'Temporary work');runner=app.runner;app.pause_requested=False;app.current=None;app.set_active(True)
             app.root.deiconify();app.root.lift();app.status.set('Reading videos selected in Photos…')
         except Exception as error:
             self.ignored.add(path.name)
@@ -121,21 +120,6 @@ class PhotosService:
         if not app.closing:
             from tkinter import messagebox
             messagebox.showerror('Convert video to 1080p',str(error),parent=app.root)
-    def is_1080(self,job,media):
-        if not job or not job.get('converted'):return False
-        local=False
-        try:
-            if job.get('output'):
-                stat=Path(job['output']).stat();local=[stat.st_size,stat.st_mtime_ns]==job.get('output_fingerprint') and stat.st_size>0
-        except OSError:pass
-        if not local and not self.app.can_fetch_converted(job):return False
-        profile=job.get('conversion_settings')
-        if profile:return str(profile.get('size'))=='1080'
-        expected=job.get('expected')
-        if not expected or not media.width or not media.height:return False
-        long,short=sorted((media.width,media.height),reverse=True);factor=min(1,1920/long,1080/short)
-        actual=sorted((expected['width'],expected['height']),reverse=True)
-        return abs(actual[0]-long*factor)<3 and abs(actual[1]-short*factor)<3
     def handle(self,event):
         app=self.app;kind=event[0]
         if kind=='service_failed':self.fail(event[2]);return
@@ -144,47 +128,20 @@ class PhotosService:
             rows,library,skipped=event[2];browser=app.browser
             if browser.actual_library!=library:browser.catalog_rows=[]
             browser.actual_library=library;browser.library.set(library)
-            prepared=[];already=[]
+            identifiers=[]
             for media in rows:
                 identifier,job=app.ensure_job(media)
-                if not job.get('retry_safe',True):self.fail('A selected video has an interrupted Photos action. Check its Photos status before converting.');return
-                if self.is_1080(job,media):already.append(identifier);continue
-                if job.get('converted'):
-                    # Keep previous conversion records and their Photos identifiers.
-                    # The active catalog entry describes the new 1080p result.
-                    job['archived']=True;previous=[identifier,*job.get('previous_conversions',[])]
-                    identifier,new=app.ensure_job(media);new['previous_conversions']=previous
-                    for key in ('backup','backup_fingerprint'):new[key]=job.get(key)
-                    job=new
-                available=browser.available_media(media) or media
-                prepared.append((identifier,available))
-            app.refresh(True)
-            if not prepared:
-                self.finish_request();app.set_active(False);app.status.set('Selected videos already have 1080p conversions. Play the converted copy or send it to Photos.');self.select(already);return
-            if not app.save_queue():self.fail('Could not save the conversion workflow.');return
-            self.select([identifier for identifier,_ in prepared]);app.size.set('1080');settings=app.settings();self.pending={identifier for identifier,_ in prepared};self.download_errors=[]
-            for identifier,_ in prepared:
-                app.items[identifier]['state']='Waiting for download'
-                if identifier in app.batch:app.items[identifier]['queued_settings']=dict(settings)
+                if not job.get('retry_safe',True):self.fail('A selected video needs attention. Check its Photos status before compressing.');return
+                identifiers.append(identifier)
+            browser.save_library();app.refresh(True);self.select(identifiers)
             app.current=None;app.set_active(False)
-            targets={media.uuid:identifier for identifier,media in prepared}
-            def done(identifier):
-                self.pending.discard(identifier)
-                if not self.pending:self.finish_request()
-                app.refresh();app.save_queue()
-            def ready(media,path):
-                identifier=targets[media.uuid];job=app.items[identifier];job['media']=replace(media,path=path,local=True)
-                if job.get('operation') is None and not job.get('converted') and identifier not in app.batch:job['state']='Downloaded'
-                if self.auto_convert and not job.get('converted') and not app.closing and not browser.cancel.is_set() and identifier!=app.current and identifier not in app.batch:
-                    app.convert_media([job['media']],library,settings_override=settings,start=not app.pause_requested)
-                elif self.auto_convert and not app.active and identifier in app.batch and not app.pause_requested and not app.closing and not browser.cancel.is_set():app.pause()
-                done(identifier)
-            def failed(key,error):
-                identifier=targets[key[1]];job=app.items[identifier]
-                if job.get('operation') is None and not job.get('converted'):job.update(state='Cancelled' if isinstance(error,ScanCancelled) else 'Failed',detail=str(error))
-                app.logger.error('Photos Service download: %s: %s',job['name'],error);done(identifier)
-            if not browser.queue_downloads([media for _,media in prepared],library,on_ready=ready,on_error=failed):
-                self.pending.clear();self.fail('The download queue is stopping. Run the Photos Service again after it stops.')
+            # The Service and the main Compress button use exactly the same flow.
+            # Requests never authorize replacement or deletion.
+            accepted=app.compress_media(rows,library,settings_override={'size':'1080'})
+            if accepted or all(app.items[identifier].get('converted') or app.items[identifier].get('original_removed') for identifier in identifiers):
+                self.finish_request()
+                if not accepted:app.status.set('Existing results are ready to review, or already replaced in Photos.')
+            else:self.fail('Compression could not start. Check the selected System Photo Library and video status.')
     def select(self,identifiers):
         app=self.app;browser=app.browser;wanted=set(identifiers)
         browser.kind.set('Videos');browser.search.set('')

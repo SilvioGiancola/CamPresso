@@ -15,7 +15,7 @@ DATA_DEST="$HOME/Library/Application Support/Video Queue"
 mkdir -p "$DATA_DEST" "$APP_DEST/Contents/MacOS" "$APP_DEST/Contents/Resources"
 "$(brew --prefix python@3.13)/bin/python3.13" -m venv "$DATA_DEST/venv"
 "$DATA_DEST/venv/bin/python" -m pip install 'tkinterdnd2==0.6.3' 'osxphotos==0.77.2' pyobjc-framework-Photos
-cp app.py engine.py photos_catalog.py photos_browser.py photos_previews.py photos_gallery.py quicktime_tracks.py photos_download.py photos_actions.py photos_resource.py jobs.py state_store.py storage_cleanup.py photos_service.py photos_navigation.py "$DATA_DEST/"
+cp app.py engine.py photos_catalog.py photos_browser.py photos_previews.py photos_gallery.py quicktime_tracks.py photos_download.py photos_actions.py photos_resource.py jobs.py state_store.py storage_cleanup.py photos_service.py photos_navigation.py workflow_logic.py "$DATA_DEST/"
 "$DATA_DEST/venv/bin/python" install_photos_service.py "$HOME/Library/Services/Convert video to 1080p.workflow"
 /System/Library/CoreServices/pbs -update
 cat > "$APP_DEST/Contents/MacOS/VideoQueue" <<'LAUNCH'
@@ -33,9 +33,9 @@ cat > "$APP_DEST/Contents/Info.plist" <<'PLIST'
 <key>CFBundleIdentifier</key><string>local.silvio.videoqueue</string>
 <key>CFBundleName</key><string>Video Queue</string>
 <key>CFBundlePackageType</key><string>APPL</string>
-<key>CFBundleVersion</key><string>2.0</string>
+<key>CFBundleVersion</key><string>3.0</string>
 <key>NSHighResolutionCapable</key><true/>
-<key>NSPhotosLibraryUsageDescription</key><string>Download selected originals, import converted videos, and remove the original or converted video only when you confirm that option.</string>
+<key>NSPhotosLibraryUsageDescription</key><string>Download selected videos, add reviewed smaller copies, and move originals to Recently Deleted only after you approve replacement.</string>
 <key>NSAppleEventsUsageDescription</key><string>Show selected items in Photos and read selected videos for 1080p conversion.</string>
 </dict></plist>
 PLIST

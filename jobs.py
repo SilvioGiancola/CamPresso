@@ -1,9 +1,11 @@
 """One sequential job pipeline for Photos originals and external files."""
 import json, sys, subprocess, threading, uuid, math
+from dataclasses import replace
 from pathlib import Path
 from photos_download import fetch_video
 from photos_catalog import ScanCancelled, ensure_outside_library
 from engine import Converter, Cancelled
+from workflow_logic import file_matches, require_system_library
 
 class JobFailure(RuntimeError):
     """Failure metadata for the GUI, without inferring recovery from message text."""
@@ -112,9 +114,46 @@ class JobRunner:
         request=dict(action=action,library=job.get('library'),uuid=media.uuid if media else None,
             new_uuid=job.get('new_uuid'),output=str(output),backup=job.get('backup'),remove=remove,
             expected=expected,output_fingerprint=job.get('output_fingerprint'),backup_fingerprint=job.get('backup_fingerprint'),journal=job.get('journal'))
+        if remove:request['original_expected']=self.expected_video(backup)
         if job.get('original_removed') and action=='finish':request['uuid']=None
         if job.get('converted_removed') and action=='finish':request['new_uuid']=None
         return self.actions(request)
+    def replace_reviewed(self,job,report=lambda text:None):
+        """Replace only the exact output approved in the review UI."""
+        try:
+            require_system_library(job.get('library'))
+            if self.cancel.is_set():raise Cancelled()
+            approval=job.get('replacement_approval') or {}
+            media=job.get('media')
+            if not media or job.get('original_removed'):raise RuntimeError('The original is no longer available for replacement.')
+            if any(approval.get(key)!=value for key,value in (
+                ('output',job.get('output')),('fingerprint',job.get('output_fingerprint')),
+                ('expected',job.get('expected')),('original_uuid',media.uuid),('new_uuid',job.get('new_uuid')))):
+                raise RuntimeError('The reviewed video changed. Review and approve it again.')
+            if not file_matches(job.get('output'),approval.get('fingerprint')):
+                raise RuntimeError('The compressed file changed. Compress and review it again.')
+            if not file_matches(job.get('backup'),job.get('backup_fingerprint')):
+                report('Preparing original for replacement')
+                # A stale/changed working copy must not become the backup used
+                # to authorize removal. Fetch the exact Photos original again.
+                path=fetch_video(replace(media,path=None,local=False),self.workspace/'Original backups'/media.uuid,job['library'],self.cancel,report)
+                stat=Path(path).stat();job.update(backup=path,backup_fingerprint=[stat.st_size,stat.st_mtime_ns])
+            self.converter=Converter()
+            job['source_size']=Path(job['backup']).stat().st_size
+            if job['source_size'] <= Path(job['output']).stat().st_size:
+                raise RuntimeError('The compressed video is not smaller. Original kept.')
+        except (Cancelled, ScanCancelled) as error:
+            if isinstance(error,ScanCancelled):error=Cancelled()
+            error.retry_safe=True
+            raise error
+        except Exception as error:raise JobFailure(str(error),retry_safe=True) from error
+        # Native transactions journal their intent and placeholder ID before commit.
+        # Any ambiguous failure beyond this point must be reconciled before retry.
+        try:return self.publish(job,remove=True)
+        except JobFailure:raise
+        except Cancelled as error:
+            error.retry_safe=True;raise
+        except Exception as error:raise JobFailure(str(error),retry_safe=True) from error
     def run(self,job,settings,report):
         if self.cancel.is_set():raise Cancelled()
         self.converter=Converter();media=job.get('media');library=job.get('library')
@@ -129,22 +168,28 @@ class JobRunner:
                 raise RuntimeError('Download this video before converting it.')
             originalfolder=self.workspace/'Original backups'/media.uuid
             report('Downloading',None)
-            try:
-                source=fetch_video(media,originalfolder,library,self.cancel,lambda text:report('Downloading',None,text))
-            except ScanCancelled:raise Cancelled()
+            if job.get('workflow_managed') and file_matches(job.get('backup'),job.get('backup_fingerprint')):
+                source=job['backup']
+                ensure_outside_library(source,library)
+            else:
+                try:
+                    source=fetch_video(media,originalfolder,library,self.cancel,lambda text:report('Downloading',None,text))
+                except ScanCancelled:raise Cancelled()
             if self.cancel.is_set():raise Cancelled()
             options=dict(settings,replace=False,folder=settings['folder'])
         else:
             source=job['path'];options=dict(settings,replace=job['replace'])
         if not options.get('folder') and not options['replace']:options['folder']=str(self.workspace/'Converted')
         source_stat=Path(source).stat()
-        job.update(backup=str(source),backup_fingerprint=[source_stat.st_size,source_stat.st_mtime_ns])
+        job.update(backup=str(source),backup_fingerprint=[source_stat.st_size,source_stat.st_mtime_ns],source_size=source_stat.st_size)
         output,detail=self.converter.convert(source,options,lambda state,p:report('Converted / verified' if state=='Completed' else state,p*.9 if job['import'] else p))
+        stat=Path(output).stat()
+        job.update(output=output,output_fingerprint=[stat.st_size,stat.st_mtime_ns],result_size=stat.st_size)
         import_attempted=False
         try:
             expected=self.expected_video(output);stat=Path(output).stat()
             backup_stat=Path(source).stat()
-            job.update(backup=str(source),backup_fingerprint=[backup_stat.st_size,backup_stat.st_mtime_ns],expected=expected,output_fingerprint=[stat.st_size,stat.st_mtime_ns])
+            job.update(backup=str(source),backup_fingerprint=[backup_stat.st_size,backup_stat.st_mtime_ns],expected=expected,output_fingerprint=[stat.st_size,stat.st_mtime_ns],result_size=stat.st_size)
             if job['import']:
                 if self.cancel.is_set():
                     raise Cancelled('Stopped before Photos import. Converted file kept at '+output+'; Photos original kept.')

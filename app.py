@@ -4,18 +4,19 @@ import json, logging, queue, re, subprocess, sys, threading, uuid
 from dataclasses import asdict, replace
 from pathlib import Path
 import tkinter as tk
-from tkinter import ttk, filedialog, messagebox
-from tkinterdnd2 import TkinterDnD, DND_FILES
+from tkinter import ttk, messagebox
+from tkinterdnd2 import TkinterDnD
 from photos_browser import PhotosBrowser
 from photos_catalog import Media
 from photos_download import VIDEO_SUFFIXES, fetch_video
 from jobs import JobRunner
-from engine import Cancelled
+from engine import Cancelled, Skipped
 from photos_catalog import ScanCancelled
 from state_store import StateFile
 from storage_cleanup import clean_storage, StorageLock
 from photos_service import PhotosService
 from photos_navigation import show_in_photos
+from workflow_logic import file_matches, human_size, savings, reviewable, can_compress, status as workflow_status, require_system_library
 
 def library_key(path):return str(Path(path).expanduser().resolve()) if path else ''
 def asset_id(value):return str(value or '').split('/')[0].upper()
@@ -30,19 +31,14 @@ class App:
             handler=logging.FileHandler(self.logfile,encoding='utf-8');handler.setFormatter(logging.Formatter('%(asctime)s %(message)s'));self.logger.addHandler(handler)
         self.items={};self.events=queue.Queue();self.active=False;self.current=None;self.runner=None;self.batch=[];self.pause_requested=False;self.closing=False;self.closed=False;self.cleanup_started=False;self.ui_ready=False
         self.navigating_photos=False;self.navigation_cancel=threading.Event()
+        self.replacements=[];self.compression_generation=0
         self.root=TkinterDnD.Tk();self.root.title('Video Library');self.root.geometry('1240x820');self.root.minsize(1000,650)
         self.activity=tk.StringVar(value='Downloads: idle · Conversion: idle')
         self.codec=tk.StringVar(value='HEVC');self.size=tk.StringVar(value='1080');self.quality=tk.StringVar(value='Balanced');self.container=tk.StringVar(value='MP4')
-        self.folder=tk.StringVar(value=str(Path.home()/'Movies'/'Video Queue'))
         outer=ttk.Frame(self.root,padding=6);outer.pack(fill='both',expand=True)
-        self.browser=PhotosBrowser(outer,self.convert_media,embedded=True,cache_dir=self.data,controller=self);self.status=self.browser.status
-        self.keep_unsent=tk.BooleanVar(value=self.browser.saved_preferences.get('keep_unsent_conversions',True) is not False)
-        def remember_cleanup(*args):
-            self.browser.saved_preferences['keep_unsent_conversions']=self.keep_unsent.get();self.browser.save_library()
-        self.keep_unsent.trace_add('write',remember_cleanup)
+        self.browser=PhotosBrowser(outer,self.compress_media,embedded=True,cache_dir=self.data,controller=self);self.status=self.browser.status
         self.options_open=False
         self.settingsbtn=ttk.Button(self.browser.heading,text='Settings ▸',command=self.toggle_settings);self.settingsbtn.pack(side='right',padx=4)
-        ttk.Button(self.browser.heading,text='Add files…',command=self.pick).pack(side='right')
         self.settings_summary=tk.StringVar();ttk.Label(self.browser.heading,textvariable=self.settings_summary).pack(side='left',padx=12)
         for var in (self.codec,self.size,self.quality,self.container):var.trace_add('write',self.update_settings_summary)
         self.update_settings_summary()
@@ -51,19 +47,12 @@ class App:
             cell=ttk.Frame(settings);cell.grid(row=0,column=index,sticky='ew',padx=(0,8),pady=2);settings.columnconfigure(index,weight=1)
             ttk.Label(cell,text=label).pack(side='left',padx=4)
             box=ttk.Combobox(cell,textvariable=var,values=values,state='readonly',width=9);box.pack(side='left',fill='x',expand=True);self.controls.append(box)
-        destination=ttk.Frame(self.options_area);destination.pack(fill='x',pady=2)
-        ttk.Button(destination,text='Output folder…',command=self.choose_folder).pack(side='left')
-        self.folderentry=ttk.Entry(destination,textvariable=self.folder);self.folderentry.pack(side='left',fill='x',expand=True,padx=4)
-        ttk.Checkbutton(self.options_area,text='Keep converted videos not sent to Photos when closing',variable=self.keep_unsent).pack(anchor='w',pady=2)
+        ttk.Label(self.options_area,text='Temporary videos are cleared on close. HDR videos are skipped.').pack(anchor='w',pady=2)
         self.convertbtn=self.browser.copybtn
-        self.viewbtn=ttk.Button(self.browser.controls,text='Play converted',command=self.view_converted);self.viewbtn.pack(side='left',padx=4)
-        self.uploadbtn=ttk.Button(self.browser.controls,text='Send to Photos',command=self.send_photos);self.uploadbtn.pack(side='left',padx=4)
-        self.removebtn=ttk.Menubutton(self.browser.controls,text='Remove from Photos ▾');self.removebtn.pack(side='left',padx=4)
-        self.remove_menu=tk.Menu(self.removebtn,tearoff=False)
-        self.remove_menu.add_command(label='Original video…',command=lambda:self.remove_version(False))
-        self.remove_menu.add_command(label='Converted video…',command=lambda:self.remove_version(True));self.removebtn.configure(menu=self.remove_menu)
+        self.viewbtn=ttk.Button(self.browser.controls,text='Play compressed',command=self.view_converted);self.viewbtn.pack(side='left',padx=4)
+        self.uploadbtn=ttk.Button(self.browser.controls,text='Replace in Photos…',command=self.replace_selected);self.uploadbtn.pack(side='right',padx=4)
         activity_row=ttk.Frame(self.browser.frame);activity_row.pack(fill='x',before=self.browser.controls,pady=(3,0))
-        self.stopbtn=ttk.Button(activity_row,text='Stop conversion',command=self.stop_conversion);self.stopbtn.pack(side='right',padx=2)
+        self.stopbtn=ttk.Button(activity_row,text='Stop compression',command=self.stop_conversion);self.stopbtn.pack(side='right',padx=2)
         self.pausebtn=ttk.Button(activity_row,text='Pause',command=self.pause);self.pausebtn.pack(side='right',padx=2)
         activity_label=ttk.Label(activity_row,textvariable=self.activity,wraplength=850);activity_label.pack(side='left',fill='x',expand=True)
         activity_row.bind('<Configure>',lambda event:activity_label.configure(wraplength=max(100,event.width-260)))
@@ -71,11 +60,11 @@ class App:
         menu.add_command(label='Show in Photos',command=self.show_photos);self.show_photos_index=menu.index('end')
         menu.add_command(label='Show converted in Photos',command=lambda:self.show_photos(True));self.show_converted_photos_index=menu.index('end')
         for label,fn in [('Video details…',self.details),('Check Photos status',self.check_photos),('Retry / review…',self.retry),('Show original in Finder',lambda:self.reveal(False)),('Show converted in Finder',lambda:self.reveal(True))]:menu.add_command(label=label,command=fn)
-        self.browser.tree.configure(displaycolumns=('name','download','conversion','photos','pixels','size'))
-        for widget in (self.browser.gallery.canvas,self.browser.tree):
-            widget.drop_target_register(DND_FILES);widget.dnd_bind('<<Drop>>',lambda event:self.add_files(self.root.tk.splitlist(event.data)))
+        self.browser.tree.configure(displaycolumns=('name','conversion','photos','duration','size','pixels'))
+        self.browser.tree.heading('conversion',text='Status');self.browser.tree.heading('photos',text='Library size reduction')
+        self.browser.gallery.status=None
         self.load_queue()
-        for error in clean_storage(self.data,list(self.items.values()),delete_unsent=not self.keep_unsent.get()):self.logger.warning('Startup cleanup: %s',error)
+        for error in clean_storage(self.data,list(self.items.values())):self.logger.warning('Startup cleanup: %s',error)
         self.ui_ready=True;self.add_files(sys.argv[1:]);self.refresh(True)
         self.photos_service=PhotosService(self)
         self.root.protocol('WM_DELETE_WINDOW',self.close);self.poll_after=self.root.after(100,self.poll)
@@ -86,17 +75,12 @@ class App:
         if self.options_open:self.options_area.pack(fill='x',after=self.browser.heading)
         else:self.options_area.pack_forget()
         self.settingsbtn.configure(text='Settings ▾' if self.options_open else 'Settings ▸')
-    def choose_folder(self):
-        if self.active:return
-        path=filedialog.askdirectory(parent=self.root)
-        if path:self.folder.set(path)
-    def settings(self):return dict(codec=self.codec.get(),size=self.size.get(),quality=self.quality.get(),container=self.container.get(),folder=self.folder.get().strip(),replace=False)
-    def pick(self):self.add_files(filedialog.askopenfilenames(parent=self.root,filetypes=[('Videos','*.mp4 *.mov *.m4v *.mkv *.avi *.mts *.m2ts *.webm'),('All files','*')]))
+    def settings(self):return dict(codec=self.codec.get(),size=self.size.get(),quality=self.quality.get(),container=self.container.get(),folder=str(self.data/'Workflow'/'Converted'),replace=False,require_smaller=True)
     def find_job(self,media):
         for identifier,job in self.items.items():
             if job.get('archived'):continue
             if job.get('media'):
-                if asset_id(job['media'].uuid)==asset_id(media.uuid) and library_key(job.get('library'))==library_key(self.browser.actual_library):return identifier,job
+                if asset_id(media.uuid) in {asset_id(job['media'].uuid),asset_id(job.get('new_uuid'))} and library_key(job.get('library'))==library_key(self.browser.actual_library):return identifier,job
             elif media.uuid=='file:'+identifier:return identifier,job
         return None,None
     def is_external(self,media):
@@ -110,10 +94,11 @@ class App:
                 stat=Path(copy).stat()
                 if [stat.st_size,stat.st_mtime_ns]==job.get('backup_fingerprint'):return copy
             path=job['media'].path if job.get('media') else job.get('path')
+            if copy and path and Path(path)==Path(copy):return None
             return path if path and Path(path).is_file() else None
         except OSError:return None
     def record_media(self,identifier,job):
-        source=self.source_path(job)
+        source=None if job.get('replacement_complete') else self.source_path(job)
         if job.get('media'):return replace(job['media'],path=source,local=bool(source))
         size=job.get('source_size')
         try:
@@ -127,7 +112,10 @@ class App:
         for identifier,job in relevant:
             if job.get('media') and asset_id(job['media'].uuid) in positions:
                 latest=merged[positions[asset_id(job['media'].uuid)]]
-                job['media']=replace(job['media'],favorite=latest.favorite)
+                job['media']=replace(job['media'],favorite=latest.favorite,duration=latest.duration)
+            elif job.get('replacement_complete'):
+                latest=next((row for row in rows if asset_id(row.uuid)==asset_id(job.get('new_uuid'))),None)
+                if latest:job['media']=replace(job['media'],favorite=latest.favorite,thumbnail=latest.thumbnail)
             if job.get('archived'):continue
             row=self.record_media(identifier,job);key=asset_id(row.uuid)
             if key not in positions:positions[key]=len(merged);merged.append(row)
@@ -135,19 +123,9 @@ class App:
         return merged
     def media_status(self,media):
         _,job=self.find_job(media)
-        if not job:return 'Not converted','Original in Photos · Not uploaded'
-        if job.get('operation')=='convert':conversion=job['state']+(' '+job.get('progress','') if job.get('progress') else '')
-        elif job.get('state') in ('Queued for conversion','Paused'):conversion=job['state']
-        elif job.get('converted'):conversion='✓ Converted' if self.has_output(job) else '✓ Converted · in Photos' if job.get('verified') and job.get('local_output_cleared') else 'Converted · local file missing'
-        elif job.get('state') in ('Failed','Cancelled','Needs review'):conversion=job['state']
-        else:conversion='Not converted'
-        if job.get('operation') in ('upload','inspect','delete_original','delete_converted','fetch_converted'):return conversion,job['state']+(' '+job.get('progress','') if job.get('progress') else '')
-        if not job.get('retry_safe',True):return conversion,'Photos status needs review'
-        original='Original removed' if job.get('original_removed') else 'Original local file' if not job.get('media') else 'Original in Photos'
-        copy='Copy removed' if job.get('converted_removed') else 'Copy in Photos' if job.get('verified') else 'Not uploaded'
-        return conversion,original+' · '+copy
+        return workflow_status(job,self.browser.transfers.get(self.browser.transfer_key(media))),savings(job)
     def has_output(self,job):
-        try:return bool(job and job.get('converted') and job.get('expected') and job.get('output') and Path(job['output']).is_file())
+        try:return bool(job and job.get('converted') and job.get('expected') and file_matches(job.get('output'),job.get('output_fingerprint')))
         except OSError:return False
     def can_fetch_converted(self,job):return bool(job and job.get('verified') and job.get('new_uuid') and job.get('expected') and not job.get('converted_removed') and job.get('retry_safe',True))
     def converting(self):return bool(self.active and self.current in self.items and self.items[self.current].get('operation')=='convert')
@@ -169,21 +147,17 @@ class App:
     def update_actions(self):
         if not self.ui_ready:return
         selected=self.browser.selected();idle=not self.active and not self.browser.busy and not self.closing
-        ready_selected=bool(selected) and all(row.kind=='Video' and self.browser.available_media(row) for row in selected)
+        ready_selected=bool(selected) and all(row.kind=='Video' and not self.is_external(row) for row in selected)
         queued=set(self.batch)
         if self.current:queued.add(self.current)
-        pending=any(identifier not in queued and not (job or {}).get('converted') and (job or {}).get('retry_safe',True) for identifier,job in map(self.find_job,selected))
+        pending=any(identifier not in queued and not (job or {}).get('compression_pending') and can_compress(job) for identifier,job in map(self.find_job,selected))
         queue_ready=not self.closing and self.browser.task in (None,'download') and (not self.active or self.converting())
-        self.convertbtn.configure(text='Add to conversion' if self.converting() else 'Convert selected',state='normal' if queue_ready and ready_selected and pending else 'disabled')
+        self.convertbtn.configure(text='Compress',state='normal' if queue_ready and ready_selected and pending else 'disabled')
         _,job=self.selected_job();ready=self.has_output(job);review=bool(job and not job.get('retry_safe',True))
-        self.viewbtn.configure(text='Play converted',state='normal' if not self.closing and (ready or idle and self.can_fetch_converted(job)) else 'disabled')
-        self.uploadbtn.configure(text='Check Photos' if review else 'Send to Photos',state='normal' if idle and job and (review and (job.get('media') or job.get('new_uuid')) or not review and ready and not job.get('verified')) else 'disabled')
-        original_ok=False
-        if len(selected)==1:
-            original_ok=bool(idle and selected[0].kind=='Video' and self.browser.available_media(selected[0]) and not self.is_external(selected[0]) and not (job or {}).get('original_removed') and not review)
-        converted_ok=bool(idle and self.can_fetch_converted(job))
-        self.remove_menu.entryconfigure(0,state='normal' if original_ok else 'disabled');self.remove_menu.entryconfigure(1,state='normal' if converted_ok else 'disabled')
-        self.removebtn.configure(state='normal' if original_ok or converted_ok else 'disabled')
+        self.viewbtn.configure(text='Play' if (job or {}).get('replacement_complete') else 'Play compressed',state='normal' if not self.closing and (ready or idle and self.can_fetch_converted(job)) else 'disabled')
+        replace_ready=bool(selected) and all(reviewable(candidate) for _,candidate in map(self.find_job,selected))
+        self.uploadbtn.configure(text='Check Photos' if review else 'Replace in Photos…',state='normal' if idle and (review or replace_ready) else 'disabled')
+        if len(selected)==1 and (job or {}).get('original_removed'):self.browser.previewbtn.configure(state='disabled')
         self.pausebtn.configure(text='Pausing…' if self.converting() and self.pause_requested else 'Pause' if self.converting() else 'Resume',state='normal' if not self.closing and (self.converting() and not self.pause_requested or not self.active and bool(self.batch) and self.browser.task in (None,'download')) else 'disabled')
         self.stopbtn.configure(state='normal' if not self.closing and (self.converting() or not self.active and self.batch) else 'disabled')
         navigation_ready=not self.closing and not self.navigating_photos
@@ -195,7 +169,11 @@ class App:
         if not self.ui_ready:return
         selected=self.browser.selected()
         if len(selected)==1:
-            conversion,photos=self.media_status(selected[0]);self.status.set(f'{selected[0].name}\n{self.browser.download_status(selected[0])[0]} · {conversion} · {photos}')
+            conversion,reduction=self.media_status(selected[0]);_,job=self.find_job(selected[0])
+            text=f'{selected[0].name}\n{conversion}'
+            if reduction:text+=f' · Library size reduction: {reduction}'
+            if job and conversion in ('Skipped','Error','Needs attention'):text+=' · '+job.get('detail','')[:160]
+            self.status.set(text)
         self.update_actions()
     def new_record(self,identifier,**values):
         return dict(id=identifier,run=True,state='Waiting',detail='',progress='',operation=None,output=None,converted=False,expected=None,output_fingerprint=None,backup=None,backup_fingerprint=None,new_uuid=None,verified=False,original_removed=False,converted_removed=False,retry_safe=True,uploaded_ids=[],**values)
@@ -205,7 +183,7 @@ class App:
             if job.get('media'):
                 job['media']=replace(job['media'],favorite=media.favorite)
                 ready=self.browser.available_media(media)
-                if ready:job['media']=replace(job['media'],path=ready.path,local=True)
+                if ready and not job.get('original_removed') and asset_id(media.uuid)==asset_id(job['media'].uuid):job['media']=replace(job['media'],path=ready.path,local=True)
             return identifier,job
         ready=self.browser.available_media(media) or media;identifier=uuid.uuid4().hex
         job=self.new_record(identifier,name=media.name,media=ready,library=self.browser.actual_library,path=None)
@@ -219,6 +197,43 @@ class App:
             identifier=uuid.uuid4().hex;self.items[identifier]=self.new_record(identifier,name=source.name,media=None,library=None,path=str(source),source_size=source.stat().st_size)
         self.save_queue()
         if self.ui_ready:self.refresh(True)
+    def compress_media(self,media,library,settings_override=None):
+        """Prepare each original, then feed the independent conversion queue."""
+        if self.closing or not self.browser.can_download():return False
+        try:require_system_library(library)
+        except Exception as error:
+            messagebox.showerror('System Photo Library required',str(error),parent=self.root);return False
+        if not self.batch and not self.active:self.pause_requested=False
+        targets={};settings=dict(self.settings(),**(settings_override or {}));generation=self.compression_generation
+        for row in media:
+            if row.kind!='Video' or self.is_external(row):continue
+            identifier,job=self.ensure_job(row)
+            if not can_compress(job) or job.get('compression_pending') or identifier in [self.current,*self.batch]:continue
+            if job.get('converted'):
+                if job.get('output') and Path(job['output']).exists():job.setdefault('retained_outputs',[]).append(job['output'])
+                job.update(converted=False,output=None,output_fingerprint=None,expected=None,result_size=None)
+            job.update(workflow_managed=True,compression_pending=True,state='Queued',detail='',queued_settings=dict(settings),replacement_approval=None)
+            targets[row.uuid]=identifier
+        if not targets:self.status.set('Select videos that still need compression. Existing results are ready to review.');return False
+        if not self.save_queue():
+            for identifier in targets.values():self.items[identifier].update(compression_pending=False,state='Error',detail='Could not save workflow.')
+            self.refresh(True);return False
+        def ready(row,path):
+            identifier=targets[row.uuid];job=self.items[identifier];stat=Path(path).stat()
+            job.update(media=replace(job['media'],path=path,local=True),backup=path,backup_fingerprint=[stat.st_size,stat.st_mtime_ns],source_size=stat.st_size,compression_pending=False)
+            if generation!=self.compression_generation or self.closing:
+                job['state']='Cancelled'
+            else:self.convert_media([job['media']],library,settings_override=settings,start=not self.pause_requested)
+            self.refresh();self.save_queue()
+        def failed(key,error):
+            job=self.items[targets[key[1]]]
+            job.update(compression_pending=False,state='Cancelled' if isinstance(error,ScanCancelled) else 'Error',detail=str(error) or 'Download cancelled.')
+            self.refresh();self.save_queue()
+        rows=[self.browser.available_media(row) or row for row in media if row.uuid in targets]
+        if not self.browser.queue_downloads(rows,library,on_ready=ready,on_error=failed):
+            for identifier in targets.values():self.items[identifier].update(compression_pending=False,state='Cancelled')
+            self.refresh(True);self.save_queue();return False
+        self.refresh(True);return True
     def convert_media(self,media,library,settings_override=None,start=True):
         if self.closing or self.browser.task not in (None,'download') or self.active and not self.converting():return
         batch=[]
@@ -226,11 +241,14 @@ class App:
             if row.kind!='Video' or not self.browser.available_media(row):continue
             identifier,job=self.ensure_job(row)
             if identifier not in [self.current,*self.batch,*batch] and not job.get('converted') and job.get('retry_safe',True):batch.append(identifier)
-        if not batch:self.status.set('Select downloaded videos that have not been converted.');return
+        if not batch:return
         settings=dict(self.settings(),**(settings_override or {}))
         if not settings.get('folder','').strip():messagebox.showerror('Output folder','Choose an output folder in Settings.');return
         previous={identifier:dict(self.items[identifier]) for identifier in batch}
-        for identifier in batch:self.items[identifier].update(state='Queued for conversion',progress='',queued_settings=dict(settings))
+        for identifier in batch:
+            job=self.items[identifier]
+            options=dict(settings,folder=str(self.data/'Workflow'/'Converted'/identifier),require_smaller=True)
+            job.update(state='Queued for conversion',progress='',queued_settings=options)
         if not self.save_queue():
             for identifier,job in previous.items():self.items[identifier]=job
             return
@@ -248,7 +266,6 @@ class App:
     def set_active(self,active):
         self.active=active
         for control in self.controls:control.configure(state='disabled' if active else 'readonly')
-        self.folderentry.configure(state='disabled' if active else 'normal')
         for control in (self.browser.choose,self.browser.scanbtn):control.configure(state='disabled' if active or self.browser.busy else 'normal')
         self.browser.update_preview_button();self.update_actions()
     def refresh(self,rebuild=False):
@@ -261,7 +278,7 @@ class App:
     def next(self):
         if not self.batch or self.pause_requested or self.runner.cancel.is_set():
             for identifier in self.batch:self.items[identifier]['state']='Paused'
-            self.current=None;self.set_active(False);self.save_queue();self.status.set('Conversion paused.' if self.pause_requested else 'Converted videos are ready to play or send to Photos.');return
+            self.current=None;self.set_active(False);self.save_queue();self.status.set('Compression paused.' if self.pause_requested else 'Compressed videos are ready to review.');return
         identifier=self.batch.pop(0);job=self.items[identifier];self.current=identifier
         self.snapshot=job.pop('queued_settings',None) or self.snapshot;snapshot=dict(self.snapshot)
         job.update(operation='convert',state='Converting',progress='0%',detail='',conversion_settings=dict(self.snapshot));self.refresh()
@@ -277,12 +294,12 @@ class App:
         def worker():
             try:
                 output,detail=runner.run(work,snapshot,report)
-                self.events.put(('converted',identifier,dict(output=output,detail=detail,**{key:work.get(key) for key in ('backup','backup_fingerprint','expected','output_fingerprint')})))
+                self.events.put(('converted',identifier,dict(output=output,detail=detail,**{key:work.get(key) for key in ('backup','backup_fingerprint','expected','output_fingerprint','source_size','result_size')})))
             except Exception as error:self.failure_event(identifier,error,work)
         threading.Thread(target=worker,daemon=True).start()
     def failure_event(self,identifier,error,work):
         self.logger.exception('Video action failed: %s',work['name'])
-        self.events.put(('failed',identifier,dict(error=str(error),output=getattr(error,'output',None) or work.get('output'),journal=getattr(error,'journal',None) or work.get('journal'),retry_safe=getattr(error,'retry_safe',True),cancelled=isinstance(error,Cancelled),**{key:work.get(key) for key in ('backup','backup_fingerprint','expected','output_fingerprint')})))
+        self.events.put(('failed',identifier,dict(error=str(error),output=getattr(error,'output',None) or work.get('output'),journal=getattr(error,'journal',None) or work.get('journal'),retry_safe=getattr(error,'retry_safe',work.get('operation')!='replace'),cancelled=isinstance(error,Cancelled),skipped=isinstance(error,Skipped),**{key:work.get(key) for key in ('backup','backup_fingerprint','expected','output_fingerprint','source_size','result_size')})))
     def view_converted(self):
         identifier,job=self.selected_job()
         if self.has_output(job):
@@ -293,6 +310,8 @@ class App:
         if self.active or self.browser.busy or self.closing:return
         job=self.items[identifier]
         if not self.can_fetch_converted(job):return
+        if job.get('output') and Path(job['output']).exists() and not file_matches(job['output'],job.get('output_fingerprint')):
+            job.setdefault('retained_outputs',[]).append(job['output'])
         self.runner=JobRunner(self.data/'Temporary work');runner=self.runner;self.current=identifier
         job.update(operation='fetch_converted',state='Downloading converted',progress='…');self.set_active(True);self.refresh();self.save_queue()
         expected=job['expected'];media=Media(job['new_uuid'],job.get('converted_name') or Path(job.get('output') or job['name']).name,'Video',None,expected['width'],expected['height'],'',None,False)
@@ -313,11 +332,40 @@ class App:
             except Exception as error:self.failure_event(identifier,error,dict(job))
         threading.Thread(target=worker,daemon=True).start()
     def send_photos(self):
-        identifier,job=self.selected_job()
-        if not job or self.active or self.browser.busy or self.closing:return
-        if not job.get('retry_safe',True):self.photo_action(identifier,'inspect');return
-        if not self.has_output(job) or job.get('verified'):return
-        self.photo_action(identifier,'upload')
+        self.replace_selected()
+    def replace_selected(self):
+        if self.active or self.browser.busy or self.closing:return
+        _,single=self.selected_job()
+        if single and not single.get('retry_safe',True):self.check_photos();return
+        candidates=[(identifier,job) for identifier,job in map(self.find_job,self.browser.selected()) if reviewable(job)]
+        if not candidates or len(candidates)!=len(self.browser.selected()):
+            self.refresh();self.status.set('Select unchanged compressed results with a measured size reduction. Changed or missing files must be compressed and reviewed again.');return
+        try:
+            for _,job in candidates:require_system_library(job.get('library'))
+        except Exception as error:messagebox.showerror('Photos',str(error),parent=self.root);return
+        reduction=sum(job['source_size']-job['result_size'] for _,job in candidates)
+        text=(f'Replace {len(candidates)} video(s) in Photos?\n\n'
+              f'Library size reduction: {human_size(reduction)}. This is not immediately reclaimed disk space.\n\n'
+              'The smaller copies will be added and checked before the originals move to Recently Deleted. '
+              'Deletion also affects your devices using iCloud Photos. Originals normally remain recoverable for 30 days; permanent deletion is manual.\n\n'
+              'Dates, location, favorites, hidden status and writable regular albums are preserved. '
+              'Faces, edit history and some Photos metadata may not transfer.\n\n'
+              'Temporary local copies will be cleared when this app closes.')
+        if not messagebox.askokcancel('Replace reviewed videos',text,parent=self.root):return
+        for identifier,job in candidates:
+            job['replacement_approval']=dict(output=job['output'],fingerprint=list(job['output_fingerprint']),expected=dict(job['expected']),original_uuid=job['media'].uuid,new_uuid=job.get('new_uuid'))
+            job['state']='Queued for replacement'
+        if not self.save_queue():
+            for _,job in candidates:job.update(replacement_approval=None,state='Ready to review')
+            return
+        self.replacements=[identifier for identifier,_ in candidates];self.next_replacement()
+    def next_replacement(self):
+        if self.closing or not self.replacements:return
+        identifier=self.replacements.pop(0);job=self.items[identifier]
+        if not reviewable(job):
+            job.update(state='Error',detail='The reviewed result is no longer available. Review it again.',replacement_approval=None)
+            self.refresh();self.save_queue();self.next_replacement();return
+        self.photo_action(identifier,'replace')
     def check_photos(self):
         identifier,job=self.selected_job()
         if not job:
@@ -325,42 +373,24 @@ class App:
             if len(selected)!=1 or self.is_external(selected[0]):return
             identifier,job=self.ensure_job(selected[0])
         if not self.active and not self.browser.busy and not self.closing:self.photo_action(identifier,'inspect')
-    def remove_version(self,converted):
-        if self.active or self.browser.busy or self.closing:return
-        selected=self.browser.selected()
-        if len(selected)!=1 or selected[0].kind!='Video':return
-        identifier,job=self.ensure_job(selected[0])
-        if not job.get('retry_safe',True):self.status.set('Check Photos status before another removal.');return
-        if converted:
-            if not self.can_fetch_converted(job):return
-        elif not job.get('media') or job.get('original_removed') or not self.browser.available_media(selected[0]):return
-        version='converted' if converted else 'original'
-        other='The original is already removed from Photos.' if converted and job.get('original_removed') else 'The converted version is not in Photos.' if not converted and not job.get('verified') else 'The other version in Photos will remain.'
-        retention='A local recovery copy will be kept.' if not converted or self.keep_unsent.get() else 'A local copy will be kept until you close the app; your Settings clear unsent conversions on close.'
-        text=f'{job["name"]}\n\nMove the {version} video to Recently Deleted in Apple Photos?\n{other}\n\n{retention}\nThis deletion also affects synced devices.'
-        if messagebox.askokcancel(f'Remove {version} from Photos?',text,parent=self.root):
-            if converted and not self.has_output(job):self.fetch_converted(identifier,remove=True)
-            else:self.photo_action(identifier,'delete_converted' if converted else 'delete_original')
     def photo_action(self,identifier,operation):
         job=self.items[identifier]
         try:self.runner=JobRunner(self.data/'Photos work')
-        except Exception as error:messagebox.showerror('Photos',str(error));return
+        except Exception as error:
+            for pending in [identifier,*self.replacements]:self.items[pending].update(replacement_approval=None,state='Ready to review')
+            self.replacements=[];self.save_queue();self.refresh();messagebox.showerror('Photos',str(error));return
         prior=dict(job)
         if operation!='inspect':job['review_operation']=operation
-        job.update(operation=operation,state={'upload':'Sending to Photos','inspect':'Checking Photos','delete_original':'Removing original','delete_converted':'Removing converted'}[operation],progress='…',journal=str(self.runner.workspace/'journals'/(uuid.uuid4().hex+'.json')),retry_safe=False)
+        job.update(operation=operation,state={'replace':'Replacing','inspect':'Checking Photos'}[operation],progress='…',journal=str(self.runner.workspace/'journals'/(uuid.uuid4().hex+'.json')),retry_safe=operation=='inspect' and job.get('retry_safe',True))
         self.current=identifier;self.set_active(True);self.refresh()
-        if not self.save_queue():self.items[identifier]=prior;self.set_active(False);self.refresh();return
+        if not self.save_queue():
+            self.items[identifier]=prior;self.current=None;self.replacements=[];self.set_active(False);self.refresh();return
         work=dict(job);runner=self.runner
-        if operation=='delete_original' and work.get('media'):
-            selected=self.browser.selected()
-            ready=self.browser.available_media(selected[0]) if len(selected)==1 else None
-            if ready:work['media']=ready
         def worker():
             try:
-                if operation=='upload':result=runner.publish(work)
-                elif operation=='inspect':result=runner.actions(dict(action='inspect',library=work.get('library'),uuid=work['media'].uuid if work.get('media') else None,new_uuid=work.get('new_uuid'),expected=work.get('expected'),output=work.get('output'),backup=work.get('backup'),journal=work['journal']))
-                else:result=runner.delete_version(work,converted=operation=='delete_converted')
-                self.events.put(('photo_done',identifier,operation,result,{key:work.get(key) for key in ('backup','backup_fingerprint')}))
+                if operation=='replace':result=runner.replace_reviewed(work,lambda text:self.events.put(('progress',identifier,'Replacing',None,text)))
+                else:result=runner.actions(dict(action='inspect',library=work.get('library'),uuid=work['media'].uuid if work.get('media') else None,new_uuid=work.get('new_uuid'),expected=work.get('expected'),output=work.get('output'),backup=work.get('backup'),journal=work['journal']))
+                self.events.put(('photo_done',identifier,operation,result,{key:work.get(key) for key in ('backup','backup_fingerprint','source_size')}))
             except Exception as error:self.failure_event(identifier,error,work)
         threading.Thread(target=worker,daemon=True).start()
     def poll(self):
@@ -387,45 +417,46 @@ class App:
                         key=(self.browser.actual_library,job['media'].uuid)
                         self.browser.transfers[key]=('↓ Preparing '+job['progress'],None);self.browser.refresh_downloads(key)
                 elif kind=='converted':
-                    job.update(event[2]);job.update(converted=True,state='Converted',progress='100%',operation=None,retry_safe=True,converted_name=Path(job['output']).name,local_output_cleared=False)
+                    job.update(event[2]);job.update(converted=True,state='Ready to review',progress='100%',operation=None,retry_safe=True,converted_name=Path(job['output']).name,local_output_cleared=False)
                 elif kind=='converted_downloaded':
-                    job.update(output=event[2],output_fingerprint=event[3],converted=True,local_output_cleared=False,operation=None,state='In Photos',progress='')
+                    job.update(output=event[2],output_fingerprint=event[3],result_size=event[3][0],converted=True,local_output_cleared=False,operation=None,state='Done' if job.get('replacement_complete') else 'Ready to review',progress='')
                     self.current=None;self.set_active(False)
                     if not self.closing:
-                        if event[4]:self.photo_action(identifier,'delete_converted')
-                        else:
-                            try:subprocess.Popen(['open',event[2]])
-                            except OSError as error:self.status.set(f'Could not play converted video: {error}')
+                        try:subprocess.Popen(['open',event[2]])
+                        except OSError as error:self.status.set(f'Could not play compressed video: {error}')
                 elif kind=='photo_done':
                     result=event[3];job.update(event[4])
-                    if operation=='upload':
+                    if operation=='replace':
                         if job.get('new_uuid'):job['last_new_uuid']=job['new_uuid']
-                        job.update(new_uuid=result['new_uuid'],verified=True,converted_removed=False)
-                        job.setdefault('uploaded_ids',[]).append(result['new_uuid'])
-                    elif operation=='delete_original':job['original_removed']=True
-                    elif operation=='delete_converted':job.update(converted_removed=True,verified=False)
+                        job.update(new_uuid=result['new_uuid'],verified=True,converted_removed=False,original_removed=True,replacement_complete=True)
+                        if result['new_uuid'] not in job.setdefault('uploaded_ids',[]):job['uploaded_ids'].append(result['new_uuid'])
                     elif operation=='inspect':
                         if job.get('media'):job['original_removed']=not result['original_present']
                         if result['converted_present']:job.update(verified=True,converted_removed=False)
-                        elif job.get('new_uuid'):job.update(last_new_uuid=job['new_uuid'],new_uuid=None,verified=False,converted_removed=job.get('verified',False) or job.get('converted_removed',False))
-                    uncertain=operation=='inspect' and job.get('review_operation')=='upload' and not result.get('new_uuid')
-                    job.update(operation=None,retry_safe=not uncertain,state='Needs review' if uncertain else 'Original removed' if job.get('original_removed') else 'In Photos' if job.get('verified') else 'Converted' if job.get('converted') else 'Downloaded',progress='')
+                        elif job.get('new_uuid'):job.update(last_new_uuid=job['new_uuid'],new_uuid=None,verified=False,replacement_complete=False,converted_removed=job.get('verified',False) or job.get('converted_removed',False))
+                    uncertain=operation=='inspect' and job.get('review_operation') in ('upload','replace') and not result.get('new_uuid')
+                    complete=bool(not uncertain and job.get('original_removed') and job.get('verified') and job.get('new_uuid'))
+                    job.update(operation=None,retry_safe=not uncertain,replacement_complete=complete,replacement_approval=None,state='Needs review' if uncertain else 'Done' if complete else 'Ready to review' if job.get('converted') else 'Ready',progress='')
                     if not uncertain:job.pop('review_operation',None)
                     job['detail']=f'Photos: {result.get("phase","Status checked")}\nJournal: {job["journal"]}'
                     if uncertain:job['detail']+='\nThe interrupted upload has no recorded asset ID. Inspect Photos before adding this file again.'
                     self.status.set(job['detail']);self.current=None;self.set_active(False)
                 elif kind=='failed':
-                    metadata=event[2];cancelled=metadata.pop('cancelled');error=metadata.pop('error')
+                    metadata=event[2];cancelled=metadata.pop('cancelled');skipped=metadata.pop('skipped',False);error=metadata.pop('error')
                     if operation=='inspect':metadata['retry_safe']=False
-                    job.update(metadata);job.update(operation=None,state='Needs review' if not job.get('retry_safe',True) else 'Cancelled' if cancelled else 'Failed',detail=error,progress='')
+                    job.update(metadata);job.update(operation=None,replacement_approval=None,state='Needs review' if not job.get('retry_safe',True) else 'Cancelled' if cancelled else 'Skipped' if skipped else 'Error',detail=error,progress='')
                     if job.get('output') and job.get('expected'):job['converted']=True
-                    self.recover_receipt(job);self.pause_requested=True
+                    self.recover_receipt(job)
+                    if not job.get('retry_safe',True):
+                        self.pause_requested=True
+                        for pending in self.replacements:self.items[pending].update(replacement_approval=None,state='Ready to review')
+                        self.replacements=[]
                     if operation!='convert':self.current=None;self.set_active(False)
                     self.status.set(f'{job["name"]}: {error}')
-                    if not self.closing:self.details(identifier)
                 self.refresh(rebuild=kind!='progress')
                 if kind!='progress':self.save_queue()
                 if operation=='convert' and kind in ('converted','failed'):self.next()
+                elif operation=='replace' and kind in ('photo_done','failed') and job.get('retry_safe',True):self.next_replacement()
         except queue.Empty:pass
         self.photos_service.tick()
         self.poll_after=self.root.after(100,self.poll)
@@ -436,21 +467,24 @@ class App:
         except Exception as error:messagebox.showerror('Conversion',str(error));return
         self.pause_requested=False;self.set_active(True);self.next()
     def clear_conversion_queue(self):
-        for identifier in self.batch:self.items[identifier].update(state='Waiting',queued_settings=None)
+        for identifier in self.batch:self.items[identifier].update(state='Cancelled',queued_settings=None)
         self.batch=[]
     def stop_conversion(self):
         if self.closing:return
-        self.pause_requested=True;self.clear_conversion_queue();self.photos_service.auto_convert=False
+        self.compression_generation+=1;self.pause_requested=True;self.clear_conversion_queue()
         if self.converting():self.runner.stop()
         self.refresh();self.save_queue();self.status.set('Stopping conversion. Downloads continue.')
     def stop(self):
-        self.pause_requested=True;self.clear_conversion_queue();self.browser.cancel.set();self.photos_service.auto_convert=False;self.navigation_cancel.set()
+        self.compression_generation+=1;self.pause_requested=True;self.clear_conversion_queue();self.browser.cancel.set();self.navigation_cancel.set()
+        for identifier in self.replacements:self.items[identifier].update(replacement_approval=None,state='Ready to review')
+        self.replacements=[]
         if self.active:self.runner.stop();self.status.set('Stopping. A Photos change already in progress will finish safely.')
     def save_queue(self):
         rows=[]
         for identifier,job in self.items.items():
-            row=dict(job,id=identifier);row['media']=asdict(job['media']) if job.get('media') else None;rows.append(row)
-        try:self.workflow.write({'version':2,'jobs':rows});return True
+            transfer=self.browser.transfers.get((job.get('library'),job['media'].uuid)) if job.get('media') else None
+            row=dict(job,id=identifier,phase=workflow_status(job,transfer));row['media']=asdict(job['media']) if job.get('media') else None;rows.append(row)
+        try:self.workflow.write({'version':3,'jobs':rows});return True
         except (OSError,ValueError,TypeError) as error:self.logger.exception('Could not save workflow');self.status.set(f'Could not save workflow: {error}');return False
     def load_queue(self):
         rows=self.workflow.read().get('jobs',[])
@@ -460,12 +494,19 @@ class App:
                 if not isinstance(row,dict) or not isinstance(row.get('name'),str):continue
                 job=dict(row);job['media']=Media(**row['media']) if row.get('media') else None;identifier=job.get('id') or uuid.uuid4().hex;job['id']=identifier
                 for key,value in [('converted_removed',False),('original_removed',False),('new_uuid',None),('verified',False),('converted',False),('uploaded_ids',[])]:job.setdefault(key,value)
-                if job.get('state') in ('Queued for conversion','Paused'):job.update(state='Waiting',queued_settings=None)
+                # Queued approvals are never replayed after restarting.
+                job['replacement_approval']=None
+                if job.get('compression_pending'):job.update(compression_pending=False,state='Cancelled')
+                if job.get('state') in ('Queued','Queued for conversion','Paused','Queued for replacement'):job.update(state='Ready to review' if job.get('converted') else 'Cancelled',queued_settings=None)
+                job['source_size']=job.get('source_size') or (job.get('backup_fingerprint') or [None])[0] or (job['media'].size if job.get('media') else None)
+                job['result_size']=job.get('result_size') or (job.get('output_fingerprint') or [None])[0]
                 if job.get('operation'):
                     if job['operation'] not in ('convert','inspect','fetch_converted','service_download'):job['review_operation']=job['operation']
                     job.update(state='Cancelled' if job['operation'] in ('convert','fetch_converted','service_download') else 'Needs review',retry_safe=job['operation'] in ('convert','fetch_converted','service_download'),operation=None,progress='')
                 if not job.get('retry_safe',True) and not job.get('new_uuid') and not job.get('review_operation') and row.get('operation')!='inspect':job['review_operation']='upload'
-                self.recover_receipt(job);self.items[identifier]=job
+                self.recover_receipt(job)
+                job['replacement_complete']=bool(job.get('original_removed') and job.get('verified') and job.get('new_uuid') and job.get('retry_safe',True))
+                self.items[identifier]=job
             except (KeyError,TypeError,ValueError):self.logger.exception('Could not restore workflow row')
     def recover_receipt(self,job):
         if not job.get('journal'):return
@@ -477,19 +518,20 @@ class App:
             expected_uuid=None if receipt.get('action')=='finish' and job.get('original_removed') else media.uuid if media else None
             if receipt.get('uuid')!=expected_uuid or receipt.get('output')!=job.get('output'):return
             phase=receipt.get('phase')
-            if receipt.get('action')=='delete_original' and receipt.get('backup'):job.update(backup=receipt['backup'],backup_fingerprint=receipt.get('backup_fingerprint'))
+            if receipt.get('backup'):job.update(backup=receipt['backup'],backup_fingerprint=receipt.get('backup_fingerprint'))
             if receipt.get('new_uuid'):job['new_uuid']=receipt['new_uuid']
             if phase=='Original moved to Recently Deleted':
                 if receipt.get('backup'):job.update(backup=receipt['backup'],backup_fingerprint=receipt.get('backup_fingerprint'))
                 job.update(original_removed=True,retry_safe=True,state='Original removed',operation=None)
-                if receipt.get('action')=='finish':job['verified']=True
+                if receipt.get('action') in ('finish','remove'):job['verified']=True
             elif phase=='Converted moved to Recently Deleted':job.update(converted_removed=True,verified=False,retry_safe=True,state='Converted',operation=None)
             elif phase=='Import verified' and not receipt.get('remove') and receipt.get('expected')==job.get('expected'):job.update(verified=True,converted_removed=False,retry_safe=True,state='In Photos',operation=None)
             elif phase=='Photos inspected' and all(isinstance(receipt.get(key),bool) for key in ('original_present','converted_present')):
                 if media:job['original_removed']=not receipt['original_present']
                 if receipt['converted_present'] and receipt.get('expected')==job.get('expected'):job.update(verified=True,converted_removed=False)
                 elif job.get('new_uuid'):job.update(last_new_uuid=job['new_uuid'],new_uuid=None,verified=False,converted_removed=job.get('verified',False) or job.get('converted_removed',False))
-                if job.get('review_operation')!='upload' or receipt.get('new_uuid'):job.update(retry_safe=True,state='Original removed' if job.get('original_removed') else 'In Photos' if job.get('verified') else 'Converted' if job.get('converted') else 'Downloaded',operation=None)
+                if job.get('review_operation') not in ('upload','replace') or receipt.get('new_uuid'):job.update(retry_safe=True,state='Original removed' if job.get('original_removed') else 'In Photos' if job.get('verified') else 'Converted' if job.get('converted') else 'Downloaded',operation=None)
+            job['replacement_complete']=bool(job.get('original_removed') and job.get('verified') and job.get('new_uuid') and job.get('retry_safe',True))
             if job.get('retry_safe',True):job.pop('review_operation',None)
         except (OSError,ValueError,TypeError):pass
     def retry(self):
@@ -498,7 +540,7 @@ class App:
         if not job:return
         if not job.get('retry_safe',True):self.status.set('Checking the interrupted Photos action.');self.check_photos();return
         if not job.get('converted'):job.update(state='Waiting',progress='');self.save_queue();self.refresh();self.start()
-        else:self.status.set('The converted file is retained. Choose Send to Photos or Check Photos status.')
+        else:self.status.set('Review the compressed video, then choose Replace in Photos. Use Play compressed to download an existing Photos copy.')
     def details(self,identifier=None):
         if identifier is None:identifier,job=self.selected_job()
         else:job=self.items.get(identifier)
@@ -508,11 +550,20 @@ class App:
             return
         media=self.record_media(identifier,job);conversion,photos=self.media_status(media)
         converted_path=job.get('output') or ('Local copy cleared on close; download from Photos to play' if job.get('local_output_cleared') and job.get('verified') else 'Not converted')
-        body=f'{job["name"]}\n{conversion}\n{photos}\n\n{job.get("detail","")}\n\nOriginal: {self.source_path(job) or "Not downloaded"}\nConverted: {converted_path}\nPhotos original ID: {job["media"].uuid if job.get("media") else "External file"}\nPhotos converted ID: {job.get("new_uuid") or job.get("last_new_uuid") or "Not uploaded"}\nJournal: {job.get("journal") or "Not recorded"}\nLog: {self.logfile}'
-        if job.get('cleanup_retained'):body+='\nA local recovery copy was kept because a version was removed from Photos or a Photos action needs review.'
+        original='Removed from Photos' if job.get('original_removed') else 'In Photos' if job.get('media') else 'External input'
+        compressed='In Photos (iCloud synchronization not confirmed)' if job.get('verified') else 'Removed from Photos' if job.get('converted_removed') else 'Not added to Photos'
+        body=f'{job["name"]}\n{conversion}\nLibrary size reduction: {photos or "Not measured"}\nOriginal: {original}\nCompressed: {compressed}\nDownload: {self.browser.download_status(media)[0]}\n\n{job.get("detail","")}\n\nLocal original: {self.source_path(job) or "Not downloaded"}\nLocal compressed: {converted_path}\nPhotos original ID: {job["media"].uuid if job.get("media") else "External file"}\nPhotos compressed ID: {job.get("new_uuid") or job.get("last_new_uuid") or "Not added"}\nJournal: {job.get("journal") or "Not recorded"}\nLog: {self.logfile}'
+        recovery=not job.get('retry_safe',True) or job.get('original_removed') and not job.get('replacement_complete')
+        if recovery:
+            retained=0
+            for path in {job.get('backup'),job.get('output')} - {None}:
+                try:retained+=Path(path).stat().st_size
+                except OSError:pass
+            body+=f'\nRecovery copies: {human_size(retained)} retained because a Photos operation is unresolved or its replacement is missing.'
         for previous in job.get('previous_conversions',[]):
             old=self.items.get(previous,{})
             body+=f'\nPrevious conversion: {old.get("output") or "Local copy cleared"} · Photos ID: {old.get("new_uuid") or old.get("last_new_uuid") or "Not uploaded"}'
+        for path in job.get('retained_outputs',[]):body+=f'\nRetained previous or changed file (never cleaned automatically): {path}'
         window=tk.Toplevel(self.root);window.title('Video details');window.geometry('780x460')
         text=tk.Text(window,wrap='word');text.pack(fill='both',expand=True,padx=10,pady=10);text.insert('1.0',body);text.configure(state='disabled')
         def copy():self.root.clipboard_clear();self.root.clipboard_append(body)
@@ -545,8 +596,13 @@ class App:
         threading.Thread(target=worker,daemon=True).start()
     def close(self):
         if self.closing or self.closed:return
-        if self.active or self.browser.busy or self.navigating_photos:
-            if not messagebox.askyesno('Work running','Stop and close after the current operation has stopped safely?'):return
+        running=self.active or self.browser.busy or self.navigating_photos
+        pending=any(self.has_output(job) and not job.get('verified') and job.get('retry_safe',True) for job in self.items.values())
+        if running or pending:
+            text=('Stop work and close after the current operation has stopped safely?\n\n' if running else 'Discard unreviewed compressed videos and close?\n\n')
+            text+='Temporary downloads and unreviewed results will be discarded. Photos originals are unchanged unless you already approved replacement. Recovery files for unresolved Photos changes will be kept.'
+            if not messagebox.askokcancel('Close Video Library',text,parent=self.root):return
+        if running:
             self.closing=True;self.browser.closing=True;self.stop();self.wait_close()
         else:self.destroy()
     def wait_close(self):
@@ -556,13 +612,13 @@ class App:
         if self.closed or self.cleanup_started:return
         if self.active or self.browser.busy or self.navigating_photos:
             self.closing=True;self.browser.closing=True;self.stop();self.wait_close();return
-        self.cleanup_started=True;self.closing=True;self.browser.closing=True;self.set_active(False);self.delete_unsent_on_close=not self.keep_unsent.get()
+        self.cleanup_started=True;self.closing=True;self.browser.closing=True;self.set_active(False)
         self.status.set('Clearing temporary local storage…');self.save_queue();self.root.after_cancel(self.poll_after);self.browser.dispose()
         self.cleanup_events=queue.Queue()
         def worker():
             try:
                 self.browser.gallery.dispose(wait=True)
-                errors=clean_storage(self.data,list(self.items.values()),delete_unsent=getattr(self,'delete_unsent_on_close',False))
+                errors=clean_storage(self.data,list(self.items.values()),delete_unsent=True)
             except Exception as error:
                 self.logger.exception('Local storage cleanup failed');errors=[str(error)]
             self.cleanup_events.put(errors)
