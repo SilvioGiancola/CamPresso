@@ -1,8 +1,8 @@
 """Read one original PhotoKit resource, emitting real download progress."""
 import json, math, re, signal, sys, threading, time
 from pathlib import Path
-from photos_actions import Actions
-from photos_catalog import ensure_outside_library
+from .photos_actions import Actions
+from .photos_catalog import ensure_outside_library
 
 def main():
     cancelled=threading.Event();done=threading.Event();lock=threading.Lock();errors=[]

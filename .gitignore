@@ -1,0 +1,33 @@
+# Python bytecode, environments and packaging outputs
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+build/
+dist/
+
+# Development tools
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+.coverage.*
+htmlcov/
+.idea/
+.vscode/
+
+# macOS and local configuration
+.DS_Store
+._*
+.env
+.env.*
+!.env.example
+
+# Local application data and media fixtures
+.local/
+*.log
+*.photoslibrary/
+*.mp4
+*.mov
+*.m4v

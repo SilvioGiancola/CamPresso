@@ -1,7 +1,7 @@
 """Regression for ExifTool-restored artwork presenting as an extra video stream."""
 import subprocess, tempfile, unittest
 from pathlib import Path
-from test_engine import TestConverter
+from tests.test_engine import TestConverter
 
 class CoverTests(unittest.TestCase):
     def test_cover_art_not_a_retained_movie_track(self):

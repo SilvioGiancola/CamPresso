@@ -4,21 +4,22 @@ from pathlib import Path
 import tkinter as tk
 from dataclasses import replace
 from tkinter import ttk, filedialog, messagebox
-from photos_catalog import scan_library, view, format_size, format_duration, ScanCancelled
-from photos_download import fetch_video
-from photos_previews import PreviewStore, ThumbnailStore
-from photos_gallery import ThumbnailGallery
-from state_store import StateFile
+from .photos_catalog import scan_library, view, format_size, format_duration, ScanCancelled
+from .photos_download import fetch_video
+from .photos_previews import PreviewStore, ThumbnailStore
+from .photos_gallery import ThumbnailGallery
+from .state_store import StateFile
 
 class PhotosBrowser:
     PAGE_SIZE=500
     def __init__(self,parent,on_queue,embedded=False,cache_dir=None,controller=None):
         self.embedded=embedded
         self.on_queue=on_queue;self.rows=[];self.filtered=[];self.events=queue.Queue()
-        self.controller=controller;self.catalog_rows=[]
+        self.controller=controller;self.catalog_rows=[];self.catalog_loaded=False
         self.busy=False;self.task=None;self.cancel=threading.Event();self.page=0;self.sort='size';self.desc=True
         self.download_queue=[];self.download_keys=set();self.download_callbacks={};self.play_requests=set();self.download_names={};self.download_count=0;self.download_errors=[]
         self.actual_library='';self.closed=False;self.closing=False;self.debounce=None
+        self.workers=set()
         cache_dir=Path(cache_dir) if cache_dir is not None else Path.home()/'Library'/'Application Support'/'Video Queue'
         self.previews=PreviewStore(cache_dir/'Previews')
         self.thumbnails=ThumbnailStore(cache_dir/'Thumbnails',self.previews)
@@ -41,21 +42,25 @@ class PhotosBrowser:
         menu.add_command(label='Permissions help…',command=self.permissions_help);more.configure(menu=menu)
         self.more_menu=menu
         remembered=self.saved_preferences.get('library','')
-        if 'library' not in self.saved_preferences:
+        if not remembered:
             try:
-                from osxphotos.utils import get_last_library_path
-                remembered=get_last_library_path() or ''
-            except Exception:logging.getLogger('videoqueue').debug('Could not read the last-opened library preference',exc_info=True)
+                from osxphotos.utils import get_system_library_path, get_last_library_path
+                remembered=get_system_library_path() or get_last_library_path() or ''
+            except Exception:logging.getLogger('videoqueue').debug('Could not discover a Photos library',exc_info=True)
         self.library=tk.StringVar(value=remembered if isinstance(remembered,str) else '')
+        self.library_name=tk.StringVar(value=Path(self.library.get()).name if self.library.get() else 'No library selected — open Settings')
         if isinstance(remembered,str) and remembered.lower().endswith('.photoslibrary'):self.actual_library=str(Path(remembered).expanduser().resolve())
         self.library.trace_add('write',self.remember_library)
         self.kind=tk.StringVar(value='All');self.search=tk.StringVar()
         top=ttk.Frame(frame);top.pack(fill='x')
         ttk.Label(top,text='Library:').pack(side='left')
-        ttk.Entry(top,textvariable=self.library).pack(side='left',fill='x',expand=True,padx=4)
-        self.choose=ttk.Button(top,text='Choose…',command=self.choose_library);self.choose.pack(side='left',padx=2)
-        self.scanbtn=ttk.Button(top,text='Scan',command=self.scan);self.scanbtn.pack(side='left',padx=2)
-        self.cancelbtn=ttk.Button(top,text='Cancel',command=lambda:self.cancel.set(),state='disabled');self.cancelbtn.pack(side='left')
+        self.choose=None
+        if embedded:ttk.Label(top,textvariable=self.library_name).pack(side='left',fill='x',expand=True,padx=4)
+        else:
+            ttk.Entry(top,textvariable=self.library).pack(side='left',fill='x',expand=True,padx=4)
+            self.choose=ttk.Button(top,text='Choose…',command=self.choose_library);self.choose.pack(side='left',padx=2)
+        self.scanbtn=ttk.Button(top,text='Refresh' if embedded else 'Scan',command=self.scan);self.scanbtn.pack(side='left',padx=2)
+        self.cancelbtn=ttk.Button(top,text='Cancel',command=self.cancel_downloads,state='disabled');self.cancelbtn.pack(side='left')
         filters=ttk.Frame(frame);filters.pack(fill='x',pady=4)
         combo=ttk.Combobox(filters,textvariable=self.kind,values=['All','Photos','Videos'],state='readonly',width=8)
         if not controller:combo.pack(side='left')
@@ -111,7 +116,7 @@ class PhotosBrowser:
         self.previewbtn=ttk.Button(controls,text='Download & view',command=self.preview_selected,state='disabled');self.previewbtn.pack(side='left')
         self.copybtn=ttk.Button(controls,text='Send to conversion →' if embedded else 'Copy selected → queue',command=self.enqueue_selected if embedded else self.copy_selected,state='disabled');self.copybtn.pack(side='right')
         if controller:self.copybtn.configure(text='Compress')
-        self.status=tk.StringVar(value='Scan your library → Compress → Review → Replace in Photos.\nThe library path is remembered when you reopen.')
+        self.status=tk.StringVar(value='Loading your saved library…\nChoose a library in Settings, then Compress → Review → Replace in Photos.' if embedded else 'Scan your library → Compress → Review → Replace in Photos.')
         status_area=ttk.Frame(frame,height=38);status_area.pack(fill='x',pady=(2,0));status_area.pack_propagate(False)
         self.status_label=ttk.Label(status_area,textvariable=self.status,wraplength=650);self.status_label.pack(fill='x',anchor='nw')
         def wrap_text(event):
@@ -135,6 +140,7 @@ class PhotosBrowser:
         if self.viewmode.get()=='List':self.tree.selection_set(items)
         else:self.gallery.selection_set(items)
     def refresh_workflow(self):
+        if self.closing:return
         self.gallery.redraw()
         for iid in self.tree.get_children():
             row=self.filtered[int(iid)];conversion,photos=self.workflow_status(row)
@@ -142,6 +148,7 @@ class PhotosBrowser:
         self.update_preview_button()
 
     def remember_library(self,*args):
+        self.library_name.set(Path(self.library.get()).name if self.library.get() else 'No library selected — open Settings')
         if self.preference_after:self.win.after_cancel(self.preference_after)
         self.preference_after=self.win.after(400,self.save_library)
     def save_library(self):
@@ -170,6 +177,7 @@ class PhotosBrowser:
         if transfer:return transfer[0],'#a46700'
         return ('● Downloaded','#24764b') if self.available_media(media) else ('○ Not downloaded','#56616d')
     def refresh_downloads(self,key=None):
+        if self.closing:return
         self.gallery.redraw()
         for iid in self.tree.get_children():
             media=self.filtered[int(iid)]
@@ -208,29 +216,37 @@ class PhotosBrowser:
         if path:self.library.set(path);self.save_library()
     def set_busy(self,busy,task=None):
         self.busy=busy;self.task=(task or self.task or 'scan') if busy else None
+        if self.closing:return
         blocked=busy or self.closing or self.controller and self.controller.active
-        for b in (self.choose,self.scanbtn):b.configure(state='disabled' if blocked else 'normal')
+        for b in (self.choose,self.scanbtn):
+            if b is not None:b.configure(state='disabled' if blocked else 'normal')
         self.cancelbtn.configure(text='Cancel downloads' if self.task=='download' else 'Cancel',state='normal' if busy else 'disabled')
         self.update_preview_button()
     def can_download(self):
         return not self.closing and self.task in (None,'download') and not (self.task=='download' and self.cancel.is_set()) and (not self.controller or self.controller.allow_background_download())
-    def scan(self):
-        if self.busy or self.closing or self.controller and self.controller.active:return
+    def scan(self,automatic=False):
+        if self.busy or self.closing or self.controller and self.controller.library_change_blocked():return
         path=self.library.get().strip()
-        if path and not Path(path).expanduser().is_dir():messagebox.showerror('Library not found','Select a .photoslibrary folder, or leave the path blank.',parent=self.win);return
+        if path and not Path(path).expanduser().is_dir():
+            text='Saved library is unavailable. Reconnect its drive and click Refresh, or choose a library in Settings.\n'+path
+            self.status.set(text)
+            if not automatic:messagebox.showerror('Library not found',text,parent=self.win)
+            return
+        if automatic and not path:
+            self.status.set('Choose your Photos library in Settings to load your videos.');return
         self.save_library()
         self.cancel=threading.Event();self.set_busy(True,'scan');self.status.set('Reading Photos library metadata… large libraries may take a while.')
         def worker():
             try:
                 rows,actual=scan_library(path or None,lambda done,total:self.events.put(('progress',f'Reading metadata: {done:,} / {total:,}')),self.cancel)
                 self.events.put(('scanned',rows,actual))
-            except ScanCancelled:self.events.put(('error','Scan cancelled. Previous list kept.'))
+            except ScanCancelled:self.events.put(('scan_error','Scan cancelled. Previous list kept.',automatic))
             except Exception as e:
                 msg=str(e)
                 if isinstance(e,PermissionError) or isinstance(e,OSError) and e.errno in (errno.EACCES,errno.EPERM):
                     msg+='\nAccess was denied. Open Permissions help for the app location and Full Disk Access instructions.'
-                self.events.put(('error',msg))
-        threading.Thread(target=worker,daemon=True).start()
+                self.events.put(('scan_error',msg,automatic))
+        self.start_worker(worker,'photos-catalog')
     def values(self):
         out={}
         for key,var in self.minimum.items():
@@ -293,6 +309,7 @@ class PhotosBrowser:
         selection=self.tree.selection() if self.viewmode.get()=='List' else self.gallery.selection()
         return [self.filtered[int(i)] for i in selection if 0<=int(i)<len(self.filtered)]
     def update_preview_button(self):
+        if self.closing:return
         selected=self.selected();valid=bool(selected) and all(row.kind=='Video' for row in selected)
         cached=self.previews.cached_path(selected[0],self.actual_library) if valid and len(selected)==1 else None
         available=len(selected)==1 and self.available_media(selected[0]) if valid else None
@@ -340,6 +357,17 @@ class PhotosBrowser:
         self.refresh_downloads()
         if starting:self.start_next_download()
         return True
+    def start_worker(self,target,name):
+        self.workers={thread for thread in self.workers if thread.is_alive()}
+        thread=threading.Thread(target=target,name=name,daemon=True)
+        self.workers.add(thread);thread.start()
+    def workers_running(self):return any(thread.is_alive() and not (self.closing and thread.name=='photos-catalog') for thread in self.workers)
+    def cancel_downloads(self):
+        self.cancel.set();self.play_requests.clear()
+        pending=self.download_queue;self.download_queue=[]
+        for key,_,_,_ in pending:
+            self.transfers.pop(key,None);self.download_keys.discard(key);self.download_names.pop(key,None)
+            self.download_callbacks_done(key,error=ScanCancelled())
     def download_callbacks_done(self,key,row=None,path=None,error=None):
         for ready,failed in self.download_callbacks.pop(key,[]):
             try:
@@ -351,7 +379,7 @@ class PhotosBrowser:
                     try:failed(key,callback_error)
                     except Exception:logging.getLogger('videoqueue').exception('Download failure callback failed: %s',key)
     def start_next_download(self):
-        if self.cancel.is_set():
+        if self.closing or self.cancel.is_set():
             for key,_,_,_ in self.download_queue:
                 self.download_callbacks_done(key,error=ScanCancelled());self.transfers.pop(key,None);self.download_keys.discard(key);self.play_requests.discard(key)
             self.download_queue=[]
@@ -367,7 +395,7 @@ class PhotosBrowser:
             except Exception as error:
                 logging.getLogger('videoqueue').exception('Video download failed: %s (%s)',row.name,row.uuid)
                 self.events.put(('download_failed',key,row,str(error),False))
-        threading.Thread(target=worker,daemon=True).start()
+        self.start_worker(worker,'original-download')
     def enqueue_selected(self):
         selected=[r for r in self.selected() if r.kind=='Video']
         if not selected:self.status.set('Select videos first.');return
@@ -398,7 +426,7 @@ class PhotosBrowser:
                     logging.getLogger('videoqueue').exception('Photos download/copy failed: %s (%s)',r.name,r.uuid)
                     errors.append(f'{r.name}: {e}')
             self.events.put(('copied',copied,errors,self.cancel.is_set()))
-        threading.Thread(target=worker,daemon=True).start()
+        self.start_worker(worker,'original-copy')
     def save_csv(self):
         if not self.filtered:self.status.set('No results to save.');return
         target=filedialog.asksaveasfilename(parent=self.win,title='Save current filtered list',defaultextension='.csv',initialfile='Photos-Catalog.csv')
@@ -415,10 +443,12 @@ class PhotosBrowser:
         except OSError as e:messagebox.showerror('Could not save',str(e),parent=self.win)
     def poll(self):
         if self.closed:return
-        self.win.after_cancel(self.poll_after)
+        if self.poll_after:self.win.after_cancel(self.poll_after)
+        self.poll_after=None
         try:
             while True:
                 e=self.events.get_nowait()
+                if self.closing and e[0] in ('progress','download_started','download_progress','thumbnail'):continue
                 if e[0]=='progress':self.status.set(e[1])
                 elif e[0]=='download_started':
                     self.downloading=e[1];self.transfers[e[1]]=('↓ Downloading…',None)
@@ -443,35 +473,44 @@ class PhotosBrowser:
                     if not e[4]:self.download_errors.append(f'{e[2].name}: {e[3]}')
                     self.download_callbacks_done(e[1],error=error);self.refresh_downloads(e[1]);self.start_next_download()
                 elif e[0]=='downloads_finished':
+                    if self.download_queue and not self.cancel.is_set() and not self.closing:
+                        self.start_next_download();continue
                     self.transfers.clear();self.downloading=None;self.download_keys.clear();self.download_names.clear();self.play_requests.clear();self.set_busy(False)
+                    if self.closing:continue
                     if not self.closing:self.render(preserve=True)
                     self.status.set(f'{e[1]} originals prepared. Compression continues automatically for queued videos.'+(' Download stopped.' if e[3] else '')+(' Some downloads failed; successful videos remain available.' if e[2] else ''))
                     if e[2] and not self.closing:messagebox.showerror('Download issues','\n\n'.join(e[2][:8])+(f'\n\n{len(e[2])-8} more issues are recorded in the log.' if len(e[2])>8 else ''),parent=self.win)
                 elif e[0]=='scanned':
-                    self.catalog_rows=e[1];self.actual_library=e[2];self.library.set(e[2]);self.set_busy(False)
+                    self.set_busy(False)
+                    if self.closing:continue
+                    self.catalog_rows=e[1];self.catalog_loaded=True;self.actual_library=e[2];self.library.set(e[2])
                     if self.controller:self.controller.refresh(True)
                     else:self.rebuild_catalog()
                     self.status.set(f'{len(self.rows):,} videos/assets · {Path(e[2]).name}\nCompress selected videos, review the results, then Replace in Photos.')
                 elif e[0]=='copied':
-                    self.on_queue(e[1]);self.set_busy(False)
+                    self.set_busy(False)
+                    if self.closing:continue
+                    self.on_queue(e[1])
                     self.status.set(f'{len(e[1])} original videos downloaded/copied and queued. Photos originals unchanged.'+(' Download/copy cancelled.' if e[3] else '')+(' Issues: '+'; '.join(e[2]) if e[2] else ''))
                     if e[2]:messagebox.showerror('Some selected videos could not be downloaded', '\n\n'.join(e[2]),parent=self.win)
                 elif e[0]=='thumbnail':self.gallery.accept_thumbnail(*e[1:])
-                elif e[0]=='error':
+                elif e[0] in ('error','scan_error'):
                     self.transfers.pop(self.downloading,None);self.downloading=None
-                    self.set_busy(False);self.status.set(e[1])
+                    self.set_busy(False);self.status.set(e[1]+('\nOpen Settings to check the library, then click Refresh.' if e[0]=='scan_error' and e[2] else ''))
                     self.refresh_downloads()
-                    if not self.closing:messagebox.showerror('Photos Library',e[1],parent=self.win)
+                    if not self.closing and not (e[0]=='scan_error' and e[2]):messagebox.showerror('Photos Library',e[1],parent=self.win)
         except queue.Empty:pass
-        if not self.closed:self.poll_after=self.win.after(100,self.poll)
+        except Exception:logging.getLogger('videoqueue').exception('Could not process a Photos browser event')
+        finally:
+            if not self.closed:self.poll_after=self.win.after(100,self.poll)
     def close(self):
         if self.closing or self.closed:return
         self.closing=True
         if self.busy:
-            self.cancel.set();self.status.set('Stopping background task before closing…');self.win.after(100,self.wait_close)
+            self.cancel_downloads();self.status.set('Stopping background task before closing…');self.win.after(100,self.wait_close)
         else:self.dispose();self.win.destroy()
     def wait_close(self):
-        if self.busy:self.win.after(100,self.wait_close)
+        if self.workers_running() or not self.events.empty():self.win.after(100,self.wait_close)
         else:self.dispose();self.win.destroy()
     def dispose(self):
         if self.closed:return
@@ -479,5 +518,5 @@ class PhotosBrowser:
         if self.preference_after:self.win.after_cancel(self.preference_after);self.preference_after=None
         self.save_library()
         self.cancel.set();self.gallery.dispose()
-        self.win.after_cancel(self.poll_after)
+        if self.poll_after:self.win.after_cancel(self.poll_after);self.poll_after=None
         if self.debounce:self.win.after_cancel(self.debounce);self.debounce=None

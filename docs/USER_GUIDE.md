@@ -43,8 +43,9 @@ This is an unsigned local app. macOS may require you to use right-click → **Op
 ## Choose a library and allow access
 
 1. In Apple Photos, open **Photos → Settings → General** and check which library is the **System Photo Library**. Video Queue does not change that setting for you.
-2. In Video Queue, choose or paste the `.photoslibrary` path and click **Scan**. You can also choose a folder containing exactly one Photos library.
-3. The path is remembered across launches, even if an external drive is temporarily unavailable. Reconnect the drive before scanning it again.
+2. In Video Queue, click **Settings…** to open a separate window. Choose or paste the `.photoslibrary` path and click **Save**. You can also choose a folder containing exactly one Photos library. **Cancel** closes the window without applying edits.
+3. The library loads after saving and automatically whenever the app launches. With no saved choice, the app tries the System Photo Library, then the last-opened library. The main window shows the library name; **Refresh** reloads its catalog.
+4. The path stays remembered if an external drive is unavailable. Reconnect the drive and click **Refresh**, or change the library in Settings. An unavailable library does not cause a silent switch to another library. Finish or stop queued work before changing libraries.
 
 Other libraries can be browsed, but the complete compression/replacement workflow requires the System Photo Library. Scanning and browsing do not download full originals.
 
@@ -58,6 +59,8 @@ Allow these permissions when needed:
 
 **More → Permissions help…** shows the app location and setup instructions. A “library/database not found” error can also mean the wrong folder was selected.
 
+The menu bar belongs to Video Queue: **Help → Video Queue User Guide** opens this guide, and **About Video Queue** shows app information. On macOS, the app menu's Settings command opens the same library and compression settings window. **File → Close Window** closes the focused window; closing the main window or choosing Quit uses the normal confirmation and cleanup flow.
+
 ## Compress, review and replace
 
 ### 1. Browse your videos
@@ -66,7 +69,7 @@ The thumbnail grid and List show filenames, original sizes, durations and favori
 
 Command-click toggles thumbnail selection; Shift-click selects a range. **Select page** selects the current page, which contains up to 500 items. Switching between Thumbnails and List preserves the current selection.
 
-Thumbnails use Photos' cached poster images or an available local video. A placeholder means no suitable local poster is available; it does not mean the video is damaged. Click **Scan** to refresh favorites changed in Photos. **More → Save list as CSV…** exports the filtered catalog.
+Thumbnails use Photos' cached poster images or an available local video. A placeholder means no suitable local poster is available; it does not mean the video is damaged. Click **Refresh** to reload favorites changed in Photos. **More → Save list as CSV…** exports the filtered catalog.
 
 ### 2. Compress selected videos
 
@@ -130,7 +133,7 @@ A heart is a Photos favorite marker, not a processing status. “Downloaded” i
 
 ## Quality and multiple videos
 
-Expand **Settings** to choose:
+Open **Settings… → Conversion settings** to choose how videos are converted. Click **Save** to keep changes across launches; **Compress** uses these saved choices:
 
 | Setting | Default | Other choices |
 | --- | --- | --- |
@@ -160,13 +163,13 @@ Replacement, changing libraries and downloading a compressed Photos copy wait un
 
 The Service never approves replacement or deletes originals. Still pictures in mixed selections are ignored. Existing results and completed replacements are reused. Service requests wait until the app is idle, and interrupted requests are not automatically replayed.
 
-If the Service is missing, run the installer again and enable it under **System Settings → Keyboard → Keyboard Shortcuts → Services**, then reopen Photos. If selection cannot be resolved, choose the correct System Photo Library in Video Queue, click Scan, and try again.
+If the Service is missing, run the installer again and enable it under **System Settings → Keyboard → Keyboard Shortcuts → Services**, then reopen Photos. If selection cannot be resolved, choose the correct System Photo Library in Video Queue's Settings, save it, and try again.
 
 ## Storage and closing the app
 
 Working videos, previews and thumbnails are stored under `~/Library/Application Support/Video Queue/`. The app checks available local space before downloads and conversion. Space is needed for originals and temporary outputs even when the aim is to reduce iCloud storage.
 
-Closing, including Command-Q, waits for active workers to stop. An approved Photos transaction already in progress is allowed to finish safely.
+Closing the main window or choosing Quit (including Command-Q) shows **Stop and close Video Queue?** when downloads, conversions or queued work are present. Choose **Yes** to cancel queued work, stop active downloads/conversion and close after temporary-file cleanup. Choose **No** to leave the app and its work running. The window shows shutdown progress after confirmation. An approved Photos transaction already in progress is allowed to finish safely before closing.
 
 | File category | Closing behavior |
 | --- | --- |
@@ -182,7 +185,7 @@ Unchanged generated outputs recorded by older versions follow the same confirmat
 
 | Problem | What to do |
 | --- | --- |
-| Wrong or unavailable library | Check the saved path, reconnect its drive and Scan. Compression requires the System Photo Library. |
+| Wrong or unavailable library | Check the saved path in Settings, reconnect its drive and click Refresh. Compression requires the System Photo Library. |
 | Catalog access denied | Use Permissions help; allow Full Disk Access for Video Queue.app and reopen it. |
 | Download stalls or fails | Check connectivity and full Photos access, read Details, then retry after the queue stops. A download without a provider percentage shows activity instead. |
 | Not enough local storage | Free local space, then retry. The original remains in Photos. |
@@ -193,6 +196,7 @@ Unchanged generated outputs recorded by older versions follow the same confirmat
 | Show in Photos cannot find the video | Open the matching library in Photos. The asset may also have been removed outside Video Queue. |
 | Storage has not decreased | Compression alone does not replace originals. Check replacement, Recently Deleted, retained recovery copies and iCloud synchronization separately. |
 | App says it is already open | Use the existing instance, or quit it before starting another. |
+| Closing during download/conversion | Choose Yes in Stop and close. It stops work and cleans up; an approved Photos write may finish first. If reporting a shutdown issue, include `launch.log` as well as Details. |
 
 **More → Check Photos status** reads the recorded original and replacement identifiers without importing or deleting. It can resolve a known completed operation. If an interrupted import has no recorded replacement ID, it remains unresolved; inspect Photos and the journal before trying to add the file again.
 

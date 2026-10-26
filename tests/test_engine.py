@@ -2,13 +2,13 @@
 import hashlib, shutil, subprocess, sys, tempfile, threading, time, unittest
 from pathlib import Path
 from unittest.mock import patch
-from engine import Converter, Cancelled
+from video_queue.engine import Converter, Cancelled
 
 class TestConverter(Converter):
     __test__=False
     def __init__(self):
         realwhich = shutil.which
-        with patch('engine.shutil.which', side_effect=lambda t: '/mock/exiftool' if t=='exiftool' else realwhich(t)):
+        with patch('video_queue.engine.shutil.which', side_effect=lambda t: '/mock/exiftool' if t=='exiftool' else realwhich(t)):
             super().__init__()
         self.fail_metadata=False
     def run(self,args,*a,**kw):

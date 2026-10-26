@@ -2,8 +2,8 @@
 import tempfile, threading, subprocess, unittest
 from pathlib import Path
 from dataclasses import replace
-from photos_catalog import Media, ScanCancelled
-from photos_download import fetch_video, command, wait_process
+from video_queue.photos_catalog import Media, ScanCancelled
+from video_queue.photos_download import fetch_video, command, wait_process
 
 class DownloadTests(unittest.TestCase):
     def setUp(self):

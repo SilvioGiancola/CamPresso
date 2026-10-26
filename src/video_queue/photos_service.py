@@ -1,9 +1,9 @@
 """Photos Services handoff: exact selected IDs, queued into the existing GUI."""
 import json, re, subprocess, sys, threading, time, uuid
 from pathlib import Path
-from state_store import StateFile
-from photos_catalog import media_from_photo, resolve_library, ScanCancelled
-from jobs import JobRunner
+from .state_store import StateFile
+from .photos_catalog import media_from_photo, resolve_library, ScanCancelled
+from .jobs import JobRunner
 
 def selected_ids(values):
     if not isinstance(values,list) or not 1<=len(values)<=500:raise ValueError('Select between 1 and 500 videos in Photos.')
@@ -104,7 +104,7 @@ class PhotosService:
         def worker():
             try:app.events.put(('service_loaded',None,load_selection(request,runner.cancel)))
             except Exception as error:app.events.put(('service_failed',None,str(error)))
-        threading.Thread(target=worker,daemon=True).start()
+        app.start_worker(worker,'photos-service-selection')
     def finish_request(self):
         if self.path:
             try:self.path.unlink(missing_ok=True)

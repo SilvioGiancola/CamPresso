@@ -1,7 +1,7 @@
 """Video Queue conversion engine. Originals are never touched until verification."""
 import json, math, os, queue, shutil, subprocess, tempfile, threading, uuid
 from pathlib import Path
-from quicktime_tracks import restore_track_dates, metadata_mismatches
+from .quicktime_tracks import restore_track_dates, metadata_mismatches
 
 class Cancelled(Exception): pass
 
@@ -19,10 +19,9 @@ class Converter:
         if missing: raise RuntimeError('Missing tools: ' + ', '.join(missing))
 
     def stop(self):
+        # The run loop checks this event and reaps its child. Never wait for a
+        # subprocess lock on the GUI thread while confirming shutdown.
         self.cancel.set()
-        with self.lock:
-            if self.proc and self.proc.poll() is None:
-                self.proc.terminate()
 
     def run(self, args, progress=None, duration=0):
         if self.cancel.is_set(): raise Cancelled()

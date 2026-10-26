@@ -2,7 +2,7 @@
 from pathlib import Path
 from types import SimpleNamespace
 import tempfile, unittest
-from photos_actions import workflow, save_journal
+from video_queue.photos_actions import workflow, save_journal
 
 class Asset:
     def localIdentifier(self):return 'NEW/L0/001'

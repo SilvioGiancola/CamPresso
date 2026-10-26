@@ -2,10 +2,10 @@
 import json, sys, subprocess, threading, uuid, math
 from dataclasses import replace
 from pathlib import Path
-from photos_download import fetch_video
-from photos_catalog import ScanCancelled, ensure_outside_library
-from engine import Converter, Cancelled
-from workflow_logic import file_matches, require_system_library
+from .photos_download import fetch_video
+from .photos_catalog import ScanCancelled, ensure_outside_library
+from .engine import Converter, Cancelled
+from .workflow_logic import file_matches, require_system_library
 
 class JobFailure(RuntimeError):
     """Failure metadata for the GUI, without inferring recovery from message text."""
@@ -28,7 +28,7 @@ class JobRunner:
             return JobFailure(message+'\nJournal: '+request['journal'],journal=request['journal'],retry_safe=request.get('action') in ('check','verify','inspect'))
         # Let an in-flight Photos transaction finish; do not kill while library writes.
         try:
-            p=subprocess.run([sys.executable,str(Path(__file__).with_name('photos_actions.py'))],input=json.dumps(request,allow_nan=False),capture_output=True,text=True,errors='replace')
+            p=subprocess.run([sys.executable,'-m','video_queue.photos_actions'],input=json.dumps(request,allow_nan=False),capture_output=True,text=True,errors='replace')
         except (OSError,ValueError) as error:raise failure('Photos helper could not start: '+str(error)) from error
         try:
             result=json.loads(p.stdout.strip().splitlines()[-1])

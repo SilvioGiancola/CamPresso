@@ -6,7 +6,7 @@ validation. Library scanning itself never initiates any downloads.
 import os, subprocess, sys, tempfile, time, json, queue, threading, math, shutil
 from pathlib import Path
 from dataclasses import replace
-from photos_catalog import ScanCancelled, copy_video, ensure_outside_library
+from .photos_catalog import ScanCancelled, copy_video, ensure_outside_library
 
 VIDEO_SUFFIXES={'.mov','.mp4','.m4v','.avi','.mkv','.mts','.m2ts','.mpg','.mpeg','.3gp','.3g2','.webm','.m2v'}
 
@@ -42,14 +42,31 @@ def wait_process(args,cancel,report,timeout=1800,popen=subprocess.Popen):
         finally:
             if proc is not None and proc.poll() is None:
                 proc.terminate()
-                try:proc.wait(timeout=5)
-                except subprocess.TimeoutExpired:proc.kill();proc.wait()
+                try:proc.wait(timeout=2)
+                except subprocess.TimeoutExpired:proc.kill();proc.wait(timeout=2)
 
-def validate_video(path,media,ffprobe=None):
+def validate_video(path,media,ffprobe=None,cancel=None):
+    cancel=cancel or threading.Event()
+    if cancel.is_set():raise ScanCancelled()
     probe=ffprobe or str(Path('/opt/homebrew/bin/ffprobe') if Path('/opt/homebrew/bin/ffprobe').exists() else 'ffprobe')
-    result=subprocess.run([probe,'-v','error','-show_streams','-of','json',str(path)],capture_output=True,text=True,timeout=60)
-    if result.returncode:raise RuntimeError('Downloaded file could not be read: '+result.stderr[-1500:])
-    data=json.loads(result.stdout)
+    process=subprocess.Popen([probe,'-v','error','-show_streams','-of','json',str(path)],stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True)
+    deadline=time.monotonic()+60
+    try:
+        while True:
+            if cancel.is_set():raise ScanCancelled()
+            if time.monotonic()>deadline:raise RuntimeError('Downloaded video validation timed out.')
+            try:output,error=process.communicate(timeout=.1);break
+            except subprocess.TimeoutExpired:continue
+        if cancel.is_set():raise ScanCancelled()
+        if process.returncode:raise RuntimeError('Downloaded file could not be read: '+error[-1500:])
+        data=json.loads(output)
+    finally:
+        if process.poll() is None:
+            process.terminate()
+            try:process.wait(timeout=2)
+            except subprocess.TimeoutExpired:process.kill();process.wait(timeout=2)
+        if process.stdout:process.stdout.close()
+        if process.stderr:process.stderr.close()
     main=next((s for s in data['streams'] if s.get('codec_type')=='video' and not s.get('disposition',{}).get('attached_pic')),None)
     if main is None:raise RuntimeError('Photos export did not contain a playable video.')
     if media.width and media.height and sorted((main['width'],main['height']))!=sorted((media.width,media.height)):
@@ -57,7 +74,7 @@ def validate_video(path,media,ffprobe=None):
 
 def resource_download(media,library,stage,cancel,report):
     """Keep native callbacks in a subprocess; cancellation stops its data request."""
-    process=subprocess.Popen([sys.executable,str(Path(__file__).with_name('photos_resource.py'))],
+    process=subprocess.Popen([sys.executable,'-m','video_queue.photos_resource'],
         stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,text=True,errors='replace')
     events=queue.Queue();diagnostics=[];complete=False;failure=None;started=time.monotonic();last=-1;reported=False
     def read():
@@ -93,8 +110,8 @@ def resource_download(media,library,stage,cancel,report):
     finally:
         if process.poll() is None:
             process.terminate()
-            try:process.wait(timeout=5)
-            except subprocess.TimeoutExpired:process.kill();process.wait()
+            try:process.wait(timeout=2)
+            except subprocess.TimeoutExpired:process.kill();process.wait(timeout=2)
         reader.join(timeout=1)
         if process.stdout:process.stdout.close()
         if process.stdin and not process.stdin.closed:process.stdin.close()
@@ -121,7 +138,8 @@ def fetch_video(media,destination,library,cancel,report=lambda s:None,runner=wai
         candidate=candidates[0]
         if not candidate.stat().st_size:raise RuntimeError('Photos returned an empty original file.')
         report('Checking downloaded original…')
-        validator(candidate,media)
+        if validator is validate_video:validator(candidate,media,cancel=cancel)
+        else:validator(candidate,media)
         downloaded=replace(media,path=str(candidate),local=True)
         # A full independent copy, exclusive naming, and cancellation checks.
         # Naming preserves the real exported container suffix.

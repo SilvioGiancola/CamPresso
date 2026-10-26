@@ -2,8 +2,8 @@
 import hashlib, json, os, shutil, tempfile
 from dataclasses import replace
 from pathlib import Path
-from photos_catalog import ScanCancelled, ensure_outside_library
-from photos_download import fetch_video, validate_video, wait_process
+from .photos_catalog import ScanCancelled, ensure_outside_library
+from .photos_download import fetch_video, validate_video, wait_process
 
 THUMBNAIL_SIZE=(176,100)
 
@@ -46,13 +46,16 @@ class PreviewStore:
     def media_for_queue(self,media,library):
         path=self.cached_path(media,library)
         return replace(media,path=path,local=True) if path else media
+    def validate(self,path,media,cancel):
+        if self.validator is validate_video:self.validator(path,media,cancel=cancel)
+        else:self.validator(path,media)
     def prepare(self,media,library,cancel,report=lambda message:None):
         if media.kind!='Video':raise RuntimeError('Select a video to download and play.')
         if cancel.is_set():raise ScanCancelled()
         cached=self.cached_path(media,library)
         if cached:
             report('Checking downloaded video…')
-            try:self.validator(cached,media)
+            try:self.validate(cached,media,cancel)
             except (RuntimeError,ValueError):
                 # Keep the old video, but stop reusing an unreadable preview.
                 entry=self.entry(media,library);self.entries.pop(str(entry),None)
@@ -69,7 +72,7 @@ class PreviewStore:
             if fetched.is_symlink() or fetched.resolve().parent!=entry.resolve():raise RuntimeError('Preview download returned a file outside its cache folder.')
             fetched=fetched.resolve()
             path=fetched
-            report('Checking video before playback…');self.validator(path,media)
+            report('Checking video before playback…');self.validate(path,media,cancel)
             if cancel.is_set():raise ScanCancelled()
             stat=path.stat()
             data={'filename':path.name,'size':stat.st_size,'mtime_ns':stat.st_mtime_ns,'uuid':media.uuid,'library':str(library)}

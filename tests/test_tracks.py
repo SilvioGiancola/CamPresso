@@ -1,8 +1,8 @@
 """Regression: original Track4/5 become Track2/3 after extra video tracks drop."""
 import tempfile, subprocess, unittest
 from pathlib import Path
-from quicktime_tracks import tracks, restore_track_dates, metadata_mismatches
-from test_engine import TestConverter
+from video_queue.quicktime_tracks import tracks, restore_track_dates, metadata_mismatches
+from tests.test_engine import TestConverter
 
 def set_dates(path):
     with open(path,'r+b') as f:

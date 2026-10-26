@@ -3,8 +3,8 @@ import json, shutil, subprocess, tempfile, threading, unittest
 from dataclasses import replace
 from pathlib import Path
 from unittest.mock import Mock
-from photos_catalog import Media, ScanCancelled, copy_video
-from photos_previews import PreviewStore, ThumbnailStore, THUMBNAIL_SIZE
+from video_queue.photos_catalog import Media, ScanCancelled, copy_video
+from video_queue.photos_previews import PreviewStore, ThumbnailStore, THUMBNAIL_SIZE
 
 class PreviewTests(unittest.TestCase):
     def setUp(self):

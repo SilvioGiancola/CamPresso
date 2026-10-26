@@ -3,7 +3,7 @@ import math, threading
 from concurrent.futures import ThreadPoolExecutor
 import tkinter as tk
 from tkinter import ttk
-from photos_catalog import ScanCancelled, format_size, format_duration
+from .photos_catalog import ScanCancelled, format_size, format_duration
 
 class ThumbnailGallery(ttk.Frame):
     TILE_WIDTH=216;TILE_HEIGHT=182;GAP=8

@@ -1,5 +1,6 @@
 """Build the Photos-only Automator Service without executing the workflow."""
 import argparse, plistlib, uuid
+from importlib.resources import files
 from pathlib import Path
 
 NAME='Convert video to 1080p'
@@ -8,7 +9,7 @@ def build(destination):
     destination=Path(destination).expanduser()
     if destination.suffix!='.workflow':raise ValueError('Choose a .workflow bundle destination.')
     contents=destination/'Contents';resources=contents/'Resources';resources.mkdir(parents=True,exist_ok=True)
-    source=Path(__file__).with_name('photos_service.applescript').read_text()
+    source=files('video_queue').joinpath('resources/photos_service.applescript').read_text(encoding='utf-8')
     service=dict(NSMenuItem={'default':NAME},NSMessage='runWorkflowAsService',NSRequiredContext={'NSApplicationIdentifier':'com.apple.Photos'},NSReturnTypes=[],NSSendTypes=[],NSServiceDescription='Convert the selected Photos videos to 1080p in Video Queue.',NSTimeout='120000')
     info=dict(CFBundleIdentifier='local.silvio.videoqueue.convert1080service',CFBundleName=NAME,CFBundleVersion='2',NSServices=[service])
     accepts=dict(Container='List',Optional=True,Types=['com.apple.applescript.object'])

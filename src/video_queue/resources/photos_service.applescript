@@ -14,7 +14,7 @@ on run {input, parameters}
             end repeat
         end tell
         set appData to (POSIX path of (path to home folder)) & "Library/Application Support/Video Queue/"
-        set commandText to (quoted form of (appData & "venv/bin/python")) & " " & (quoted form of (appData & "photos_service.py"))
+        set commandText to (quoted form of (appData & "venv/bin/python")) & " -m video_queue.photos_service"
         repeat with identifierText in identifiers
             set commandText to commandText & " " & (quoted form of ((contents of identifierText) as text))
         end repeat

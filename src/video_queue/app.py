@@ -1,28 +1,29 @@
 #!/usr/bin/env python3
 """Unified catalog and actions for original and converted video versions."""
-import json, logging, queue, re, subprocess, sys, threading, uuid
+import argparse, json, logging, queue, re, subprocess, sys, threading, uuid, webbrowser
 from dataclasses import asdict, replace
 from pathlib import Path
 import tkinter as tk
-from tkinter import ttk, messagebox
+from tkinter import ttk, messagebox, filedialog
 from tkinterdnd2 import TkinterDnD
-from photos_browser import PhotosBrowser
-from photos_catalog import Media
-from photos_download import VIDEO_SUFFIXES, fetch_video
-from jobs import JobRunner
-from engine import Cancelled, Skipped
-from photos_catalog import ScanCancelled
-from state_store import StateFile
-from storage_cleanup import clean_storage, StorageLock
-from photos_service import PhotosService
-from photos_navigation import show_in_photos
-from workflow_logic import file_matches, human_size, savings, reviewable, can_compress, status as workflow_status, require_system_library
+from .photos_browser import PhotosBrowser
+from .photos_catalog import Media, resolve_library
+from .photos_download import VIDEO_SUFFIXES, fetch_video
+from .jobs import JobRunner
+from .engine import Cancelled, Skipped
+from .photos_catalog import ScanCancelled
+from .state_store import StateFile
+from .storage_cleanup import clean_storage, StorageLock
+from .photos_service import PhotosService
+from .photos_navigation import show_in_photos
+from .workflow_logic import file_matches, human_size, savings, reviewable, can_compress, status as workflow_status, require_system_library
 
 def library_key(path):return str(Path(path).expanduser().resolve()) if path else ''
 def asset_id(value):return str(value or '').split('/')[0].upper()
 
 class App:
-    def __init__(self,data=None):
+    SETTING_CHOICES={'codec':('Video codec','HEVC',('HEVC','H.264')),'size':('Resolution (p)','1080',('720','1080','2160')),'quality':('Quality','Balanced',('High','Balanced','Small')),'container':('File format','MP4',('MP4','MOV'))}
+    def __init__(self,data=None,files=()):
         self.data=Path(data) if data is not None else Path.home()/'Library'/'Application Support'/'Video Queue'
         self.workflow=StateFile(self.data/'workflow.json');self.data.mkdir(parents=True,exist_ok=True)
         self.storage_lock=StorageLock(self.data)
@@ -32,22 +33,17 @@ class App:
         self.items={};self.events=queue.Queue();self.active=False;self.current=None;self.runner=None;self.batch=[];self.pause_requested=False;self.closing=False;self.closed=False;self.cleanup_started=False;self.ui_ready=False
         self.navigating_photos=False;self.navigation_cancel=threading.Event()
         self.replacements=[];self.compression_generation=0
+        self.workers=set();self.close_prompt_open=False
         self.root=TkinterDnD.Tk();self.root.title('Video Library');self.root.geometry('1240x820');self.root.minsize(1000,650)
         self.activity=tk.StringVar(value='Downloads: idle · Conversion: idle')
         self.codec=tk.StringVar(value='HEVC');self.size=tk.StringVar(value='1080');self.quality=tk.StringVar(value='Balanced');self.container=tk.StringVar(value='MP4')
         outer=ttk.Frame(self.root,padding=6);outer.pack(fill='both',expand=True)
         self.browser=PhotosBrowser(outer,self.compress_media,embedded=True,cache_dir=self.data,controller=self);self.status=self.browser.status
-        self.options_open=False
-        self.settingsbtn=ttk.Button(self.browser.heading,text='Settings ▸',command=self.toggle_settings);self.settingsbtn.pack(side='right',padx=4)
-        self.settings_summary=tk.StringVar();ttk.Label(self.browser.heading,textvariable=self.settings_summary).pack(side='left',padx=12)
-        for var in (self.codec,self.size,self.quality,self.container):var.trace_add('write',self.update_settings_summary)
-        self.update_settings_summary()
-        self.options_area=ttk.Frame(self.browser.frame);settings=ttk.Frame(self.options_area);settings.pack(fill='x');self.controls=[]
-        for index,(label,var,values) in enumerate([('Codec',self.codec,['HEVC','H.264']),('Resolution',self.size,['720','1080','2160']),('Quality',self.quality,['High','Balanced','Small']),('File',self.container,['MP4','MOV'])]):
-            cell=ttk.Frame(settings);cell.grid(row=0,column=index,sticky='ew',padx=(0,8),pady=2);settings.columnconfigure(index,weight=1)
-            ttk.Label(cell,text=label).pack(side='left',padx=4)
-            box=ttk.Combobox(cell,textvariable=var,values=values,state='readonly',width=9);box.pack(side='left',fill='x',expand=True);self.controls.append(box)
-        ttk.Label(self.options_area,text='Temporary videos are cleared on close. HDR videos are skipped.').pack(anchor='w',pady=2)
+        self.settings_window=None
+        saved=self.browser.saved_preferences.get('compression',{})
+        if not isinstance(saved,dict):saved={}
+        for key,(_,default,choices) in self.SETTING_CHOICES.items():getattr(self,key).set(saved.get(key) if saved.get(key) in choices else default)
+        self.settingsbtn=ttk.Button(self.browser.heading,text='Settings…',command=self.show_settings);self.settingsbtn.pack(side='right',padx=4)
         self.convertbtn=self.browser.copybtn
         self.viewbtn=ttk.Button(self.browser.controls,text='Play compressed',command=self.view_converted);self.viewbtn.pack(side='left',padx=4)
         self.uploadbtn=ttk.Button(self.browser.controls,text='Replace in Photos…',command=self.replace_selected);self.uploadbtn.pack(side='right',padx=4)
@@ -65,16 +61,129 @@ class App:
         self.browser.gallery.status=None
         self.load_queue()
         for error in clean_storage(self.data,list(self.items.values())):self.logger.warning('Startup cleanup: %s',error)
-        self.ui_ready=True;self.add_files(sys.argv[1:]);self.refresh(True)
+        self.ui_ready=True;self.add_files(files);self.refresh(True)
         self.photos_service=PhotosService(self)
         self.root.protocol('WM_DELETE_WINDOW',self.close);self.poll_after=self.root.after(100,self.poll)
-        if sys.platform=='darwin':self.root.createcommand('tk::mac::Quit',self.close)
-    def update_settings_summary(self,*args):self.settings_summary.set(f'{self.codec.get()} · {self.size.get()}p · {self.quality.get()} · {self.container.get()}')
-    def toggle_settings(self):
-        self.options_open=not self.options_open
-        if self.options_open:self.options_area.pack(fill='x',after=self.browser.heading)
-        else:self.options_area.pack_forget()
-        self.settingsbtn.configure(text='Settings ▾' if self.options_open else 'Settings ▸')
+        self.configure_menu()
+        self.root.after_idle(lambda:self.browser.scan(automatic=True))
+    def configure_menu(self):
+        """Replace Tk's demonstration menus and route native macOS actions."""
+        self.root.tk.call('tk','appname','Video Queue')
+        self.menubar=tk.Menu(self.root,tearoff=False)
+        mac=sys.platform=='darwin';modifier='Command' if mac else 'Control'
+        if mac:
+            application=tk.Menu(self.menubar,name='apple',tearoff=False)
+            application.add_command(label='About Video Queue',command=self.show_about)
+            self.menubar.add_cascade(label='Video Queue',menu=application)
+            self.root.createcommand('tkAboutDialog',self.show_about)
+            self.root.createcommand('tk::mac::ShowHelp',self.show_help)
+            self.root.createcommand('tk::mac::ShowPreferences',self.show_settings)
+            self.root.createcommand('tk::mac::Quit',self.close)
+        file_menu=tk.Menu(self.menubar,tearoff=False)
+        file_menu.add_command(label='Close Window',accelerator=modifier+'+W',command=self.close_window)
+        if not mac:
+            file_menu.add_command(label='Settings…',command=self.show_settings)
+            file_menu.add_command(label='Quit Video Queue',command=self.close)
+        self.menubar.add_cascade(label='File',menu=file_menu)
+        edit_menu=tk.Menu(self.menubar,tearoff=False)
+        for label,key in [('Undo','Z'),('Redo','Shift+Z'),('Cut','X'),('Copy','C'),('Paste','V'),('Select All','A')]:
+            edit_menu.add_command(label=label,accelerator=modifier+'+'+key,command=lambda action=label.replace(' ',''):self.edit_action(action))
+        self.menubar.add_cascade(label='Edit',menu=edit_menu)
+        if mac:
+            window_menu=tk.Menu(self.menubar,name='window',tearoff=False)
+            self.menubar.add_cascade(label='Window',menu=window_menu)
+        help_menu=tk.Menu(self.menubar,name='help',tearoff=False)
+        help_menu.add_command(label='Video Queue User Guide',command=self.show_help)
+        help_menu.add_command(label='Permissions help…',command=self.browser.permissions_help)
+        if not mac:help_menu.add_command(label='About Video Queue',command=self.show_about)
+        self.menubar.add_cascade(label='Help',menu=help_menu)
+        # macOS recognizes .apple/.window/.help only when the menu is attached.
+        self.root.configure(menu=self.menubar)
+        self.root.bind_all('<'+modifier+'-w>',self.close_window)
+    def edit_action(self,action):
+        widget=self.root.focus_get()
+        if widget is not None:widget.event_generate('<<'+action+'>>')
+    def close_window(self,event=None):
+        widget=self.root.focus_get();window=widget.winfo_toplevel() if widget is not None else self.root
+        if window==self.root:self.close()
+        else:window.destroy()
+        return 'break'
+    def show_settings(self):
+        if self.closing:return
+        self.root.deiconify()
+        if self.settings_window is not None and self.settings_window.winfo_exists():
+            self.settings_window.deiconify();self.settings_window.lift();self.settings_window.focus_set();return
+        window=tk.Toplevel(self.root);self.settings_window=window;window.title('Video Queue — Settings');window.transient(self.root);window.resizable(True,False)
+        window.protocol('WM_DELETE_WINDOW',self.close_settings)
+        content=ttk.Frame(window,padding=16);content.pack(fill='both',expand=True)
+        library=ttk.LabelFrame(content,text='Photos library',padding=10);library.pack(fill='x')
+        self.settings_library=tk.StringVar(value=self.browser.library.get())
+        self.settings_library_entry=ttk.Entry(library,textvariable=self.settings_library,width=62);self.settings_library_entry.pack(side='left',fill='x',expand=True)
+        self.settings_choose=ttk.Button(library,text='Choose…',command=self.choose_settings_library);self.settings_choose.pack(side='left',padx=(8,0))
+        ttk.Label(content,text='The saved library loads automatically when Video Queue opens.\nCompression and replacement require the System Photo Library.',wraplength=560).pack(anchor='w',pady=(6,12))
+        compression=ttk.LabelFrame(content,text='Conversion settings',padding=10);compression.pack(fill='x')
+        self.settings_drafts={}
+        for index,(key,(label,_,choices)) in enumerate(self.SETTING_CHOICES.items()):
+            var=tk.StringVar(value=getattr(self,key).get());self.settings_drafts[key]=var
+            ttk.Label(compression,text=label).grid(row=index,column=0,sticky='w',padx=(0,16),pady=3)
+            ttk.Combobox(compression,textvariable=var,values=choices,state='readonly',width=16).grid(row=index,column=1,sticky='ew',pady=3)
+        compression.columnconfigure(1,weight=1)
+        ttk.Label(content,text='Compress uses these settings. Save to remember them across launches.\nVideos already queued keep their existing settings.\nTemporary videos are cleared on close. HDR videos are skipped.',wraplength=560).pack(anchor='w',pady=(8,4))
+        self.settings_notice=tk.StringVar();ttk.Label(content,textvariable=self.settings_notice,wraplength=560).pack(anchor='w',pady=4)
+        actions=ttk.Frame(content);actions.pack(fill='x',pady=(8,0))
+        self.settings_save=ttk.Button(actions,text='Save',command=self.save_settings);self.settings_save.pack(side='right')
+        ttk.Button(actions,text='Cancel',command=self.close_settings).pack(side='right',padx=8)
+        window.bind('<Escape>',lambda event:self.close_settings());self.update_settings_state();window.focus_set()
+    def close_settings(self):
+        if self.settings_window is not None and self.settings_window.winfo_exists():self.settings_window.destroy()
+        self.settings_window=None
+    def library_change_blocked(self):
+        return bool(self.closing or self.active or self.browser.busy or self.navigating_photos or self.batch or self.replacements or self.browser.download_queue or any(job.get('compression_pending') for job in self.items.values()))
+    def update_settings_state(self):
+        blocked=self.library_change_blocked()
+        self.browser.scanbtn.configure(state='disabled' if blocked else 'normal')
+        if self.settings_window is None or not self.settings_window.winfo_exists():return
+        for control in (self.settings_library_entry,self.settings_choose):control.configure(state='disabled' if blocked else 'normal')
+        self.settings_save.configure(state='disabled' if self.closing else 'normal')
+        self.settings_notice.set('Finish or stop queued work before changing the library.' if blocked else '')
+    def choose_settings_library(self):
+        if self.library_change_blocked():return
+        current=Path(self.settings_library.get()).expanduser()
+        initial=current.parent if current.parent.is_dir() else Path.home()/'Pictures'
+        path=filedialog.askdirectory(parent=self.settings_window,title='Select your .photoslibrary bundle or the folder containing it',initialdir=initial)
+        if path:self.settings_library.set(path)
+    def save_settings(self):
+        if self.closing:return
+        # An idle window may have become busy while its chooser was open.
+        changed=self.settings_library.get().strip()!=self.browser.library.get().strip()
+        if changed and self.library_change_blocked():
+            self.settings_notice.set('Finish or stop queued work before changing the library.');return
+        try:
+            path=self.browser.library.get().strip()
+            if changed:
+                if not self.settings_library.get().strip():raise ValueError('Choose a Photos library before saving.')
+                path=library_key(resolve_library(self.settings_library.get().strip()))
+            compression={key:var.get() for key,var in self.settings_drafts.items()}
+            if any(value not in self.SETTING_CHOICES[key][2] for key,value in compression.items()):raise ValueError('Choose a listed compression setting.')
+            preferences={**self.browser.saved_preferences,'library':path,'compression':compression}
+            self.browser.preferences.write(preferences)
+        except (OSError,ValueError) as error:
+            messagebox.showerror('Could not save settings',str(error),parent=self.settings_window);return
+        self.browser.saved_preferences=preferences
+        for key,value in compression.items():getattr(self,key).set(value)
+        switch=changed and library_key(path)!=library_key(self.browser.actual_library)
+        self.browser.library.set(path);self.close_settings()
+        if switch:
+            self.browser.catalog_rows=[];self.browser.catalog_loaded=False;self.browser.actual_library=path;self.browser.page=0;self.refresh(True)
+        if not self.library_change_blocked() and (changed or not self.browser.catalog_loaded):self.browser.scan()
+    def show_about(self):
+        messagebox.showinfo('About Video Queue','Video Queue\n\nCompress → Review → Replace\n\nReview smaller videos before replacing their originals in Apple Photos.',parent=self.root)
+    def show_help(self):
+        url='https://github.com/SilvioGiancola/MacVideoLibraryConverter/blob/main/docs/USER_GUIDE.md'
+        try:
+            if not webbrowser.open(url):raise OSError('No browser could be opened.')
+        except (OSError,webbrowser.Error) as error:
+            messagebox.showerror('Video Queue Help',f'Could not open the user guide: {error}\n\n{url}',parent=self.root)
     def settings(self):return dict(codec=self.codec.get(),size=self.size.get(),quality=self.quality.get(),container=self.container.get(),folder=str(self.data/'Workflow'/'Converted'),replace=False,require_smaller=True)
     def find_job(self,media):
         for identifier,job in self.items.items():
@@ -145,7 +254,8 @@ class App:
         if self.batch:conversion+=f' · {len(self.batch)} queued'
         self.activity.set(download+'    |    '+conversion)
     def update_actions(self):
-        if not self.ui_ready:return
+        if not self.ui_ready or self.closing:return
+        self.update_settings_state()
         selected=self.browser.selected();idle=not self.active and not self.browser.busy and not self.closing
         ready_selected=bool(selected) and all(row.kind=='Video' and not self.is_external(row) for row in selected)
         queued=set(self.batch)
@@ -263,12 +373,18 @@ class App:
         except Exception as error:messagebox.showerror('Output folder',str(error));self.refresh(True);return
         self.pause_requested=False;self.set_active(True);self.next()
     def start(self):self.browser.enqueue_selected()
+    def start_worker(self,target,name):
+        """Keep worker lifetime separate from UI state and completion events."""
+        self.workers={thread for thread in self.workers if thread.is_alive()}
+        thread=threading.Thread(target=target,name=name,daemon=True)
+        self.workers.add(thread);thread.start()
     def set_active(self,active):
         self.active=active
-        for control in self.controls:control.configure(state='disabled' if active else 'readonly')
-        for control in (self.browser.choose,self.browser.scanbtn):control.configure(state='disabled' if active or self.browser.busy else 'normal')
+        if self.closing:return
+        if self.browser.choose is not None:self.browser.choose.configure(state='disabled' if self.library_change_blocked() else 'normal')
         self.browser.update_preview_button();self.update_actions()
     def refresh(self,rebuild=False):
+        if self.closing:return
         for job in self.items.values():
             if job.get('media') and job.get('backup') and library_key(job.get('library'))==library_key(self.browser.actual_library):
                 self.browser.local_copies[(self.browser.actual_library,job['media'].uuid)]=(job['backup'],job.get('backup_fingerprint'))
@@ -296,7 +412,7 @@ class App:
                 output,detail=runner.run(work,snapshot,report)
                 self.events.put(('converted',identifier,dict(output=output,detail=detail,**{key:work.get(key) for key in ('backup','backup_fingerprint','expected','output_fingerprint','source_size','result_size')})))
             except Exception as error:self.failure_event(identifier,error,work)
-        threading.Thread(target=worker,daemon=True).start()
+        self.start_worker(worker,'video-conversion')
     def failure_event(self,identifier,error,work):
         self.logger.exception('Video action failed: %s',work['name'])
         self.events.put(('failed',identifier,dict(error=str(error),output=getattr(error,'output',None) or work.get('output'),journal=getattr(error,'journal',None) or work.get('journal'),retry_safe=getattr(error,'retry_safe',work.get('operation')!='replace'),cancelled=isinstance(error,Cancelled),skipped=isinstance(error,Skipped),**{key:work.get(key) for key in ('backup','backup_fingerprint','expected','output_fingerprint','source_size','result_size')})))
@@ -330,7 +446,7 @@ class App:
                 self.events.put(('converted_downloaded',identifier,output,[stat.st_size,stat.st_mtime_ns],remove))
             except ScanCancelled:self.failure_event(identifier,Cancelled(),dict(job))
             except Exception as error:self.failure_event(identifier,error,dict(job))
-        threading.Thread(target=worker,daemon=True).start()
+        self.start_worker(worker,'converted-download')
     def send_photos(self):
         self.replace_selected()
     def replace_selected(self):
@@ -392,10 +508,11 @@ class App:
                 else:result=runner.actions(dict(action='inspect',library=work.get('library'),uuid=work['media'].uuid if work.get('media') else None,new_uuid=work.get('new_uuid'),expected=work.get('expected'),output=work.get('output'),backup=work.get('backup'),journal=work['journal']))
                 self.events.put(('photo_done',identifier,operation,result,{key:work.get(key) for key in ('backup','backup_fingerprint','source_size')}))
             except Exception as error:self.failure_event(identifier,error,work)
-        threading.Thread(target=worker,daemon=True).start()
+        self.start_worker(worker,'photos-action')
     def poll(self):
-        if self.closed:return
-        self.root.after_cancel(self.poll_after)
+        if self.closed or self.cleanup_started:return
+        if self.poll_after:self.root.after_cancel(self.poll_after)
+        self.poll_after=None
         try:
             while True:
                 event=self.events.get_nowait();kind,identifier=event[:2]
@@ -408,6 +525,7 @@ class App:
                 if kind.startswith('service_'):
                     self.photos_service.handle(event);continue
                 if identifier not in self.items:continue
+                if self.closing and kind=='progress':continue
                 job=self.items[identifier];operation=job.get('operation')
                 if kind=='progress':
                     job.update(state=event[2],progress=f'{event[3]:.0f}%' if event[3] is not None else '…')
@@ -458,8 +576,11 @@ class App:
                 if operation=='convert' and kind in ('converted','failed'):self.next()
                 elif operation=='replace' and kind in ('photo_done','failed') and job.get('retry_safe',True):self.next_replacement()
         except queue.Empty:pass
-        self.photos_service.tick()
-        self.poll_after=self.root.after(100,self.poll)
+        except Exception:self.logger.exception('Could not process a workflow event')
+        finally:
+            # A failed UI update must not strand completion events or shutdown.
+            if not self.closed and not self.cleanup_started:self.poll_after=self.root.after(100,self.poll)
+        if not self.closing:self.photos_service.tick()
     def pause(self):
         if self.converting():self.pause_requested=True;self.update_actions();self.status.set('Will pause conversion after the current video. Downloads continue.');return
         if self.active or not self.batch or self.closing or self.browser.task not in (None,'download'):return
@@ -475,10 +596,12 @@ class App:
         if self.converting():self.runner.stop()
         self.refresh();self.save_queue();self.status.set('Stopping conversion. Downloads continue.')
     def stop(self):
-        self.compression_generation+=1;self.pause_requested=True;self.clear_conversion_queue();self.browser.cancel.set();self.navigation_cancel.set()
+        self.compression_generation+=1;self.pause_requested=True;self.clear_conversion_queue();self.browser.cancel_downloads();self.navigation_cancel.set()
+        for job in self.items.values():
+            if job.get('compression_pending'):job.update(compression_pending=False,state='Cancelled',queued_settings=None)
         for identifier in self.replacements:self.items[identifier].update(replacement_approval=None,state='Ready to review')
         self.replacements=[]
-        if self.active:self.runner.stop();self.status.set('Stopping. A Photos change already in progress will finish safely.')
+        if self.runner:self.runner.stop()
     def save_queue(self):
         rows=[]
         for identifier,job in self.items.items():
@@ -593,27 +716,57 @@ class App:
             except Exception as exception:
                 self.logger.exception('Could not show Photos asset %s',identifier);error=str(exception)
             self.events.put(('photos_navigation',None,error))
-        threading.Thread(target=worker,daemon=True).start()
+        self.start_worker(worker,'photos-navigation')
     def close(self):
-        if self.closing or self.closed:return
-        running=self.active or self.browser.busy or self.navigating_photos
+        if self.closing or self.closed or self.close_prompt_open:return
+        running=self.active or self.browser.busy or self.navigating_photos or bool(self.batch or self.replacements or self.browser.download_queue) or any(job.get('compression_pending') for job in self.items.values()) or self.workers_running()
         pending=any(self.has_output(job) and not job.get('verified') and job.get('retry_safe',True) for job in self.items.values())
         if running or pending:
-            text=('Stop work and close after the current operation has stopped safely?\n\n' if running else 'Discard unreviewed compressed videos and close?\n\n')
-            text+='Temporary downloads and unreviewed results will be discarded. Photos originals are unchanged unless you already approved replacement. Recovery files for unresolved Photos changes will be kept.'
-            if not messagebox.askokcancel('Close Video Library',text,parent=self.root):return
-        if running:
-            self.closing=True;self.browser.closing=True;self.stop();self.wait_close()
-        else:self.destroy()
+            text=('Downloads and conversions will be stopped, queued work will be cancelled, and Video Queue will close.\n\n' if running else 'Unreviewed compressed videos will be discarded and Video Queue will close.\n\n')
+            text+='Temporary working files will be cleared. Recovery copies for unresolved Photos operations will be kept.'
+            if self.active and self.current in self.items and self.items[self.current].get('operation')=='replace':text+='\n\nAn approved Photos change already in progress will finish before the app closes.'
+            text+='\n\nStop and close?' if running else '\n\nDiscard and close?'
+            self.close_prompt_open=True
+            try:confirmed=messagebox.askyesno('Stop and close Video Queue?' if running else 'Close Video Queue?',text,parent=self.root)
+            finally:self.close_prompt_open=False
+            if not confirmed:return
+        self.begin_close()
+    def workers_running(self):
+        # Cancelled catalog queries only read metadata and publish queue events.
+        # They can finish as daemon threads without delaying GUI shutdown.
+        return any(thread.is_alive() and not (self.closing and thread.name=='photos-service-selection') for thread in self.workers) or self.browser.workers_running()
+    def begin_close(self):
+        self.closing=True;self.browser.closing=True;self.stop()
+        self.browser.gallery.dispose()
+        self.status.set('Stopping downloads and conversions before closing…')
+        # Native dialogs run a nested event loop. If Close was chosen while a
+        # poll callback was inside a dialog, keep draining completion events.
+        if self.poll_after is None:self.poll_after=self.root.after(0,self.poll)
+        if self.browser.poll_after is None:self.browser.poll_after=self.root.after(0,self.browser.poll)
+        self.wait_close()
     def wait_close(self):
-        if self.active or self.browser.busy or self.navigating_photos:self.root.after(150,self.wait_close)
-        else:self.destroy()
+        if self.closed or self.cleanup_started:return
+        if self.workers_running() or not self.events.empty() or not self.browser.events.empty():
+            if self.active and self.current in self.items and self.items[self.current].get('operation')=='replace':self.status.set('Finishing the approved Photos change before closing…')
+            else:self.status.set('Stopping downloads and conversions before closing…')
+            self.root.after(100,self.wait_close);return
+        # Terminal events are drained and workers are gone. Stale UI busy flags
+        # from an earlier callback failure must not keep the app open forever.
+        for job in self.items.values():
+            operation=job.get('operation')
+            if operation in ('convert','fetch_converted','service_download'):job.update(operation=None,state='Cancelled',progress='')
+            elif operation in ('replace','inspect'):
+                job.update(operation=None,retry_safe=False,state='Needs review',progress='');self.recover_receipt(job)
+        self.active=False;self.current=None;self.navigating_photos=False;self.browser.busy=False;self.browser.task=None
+        self.destroy()
     def destroy(self):
         if self.closed or self.cleanup_started:return
-        if self.active or self.browser.busy or self.navigating_photos:
-            self.closing=True;self.browser.closing=True;self.stop();self.wait_close();return
+        if self.workers_running() or self.active or self.browser.busy or self.navigating_photos:
+            self.begin_close();return
         self.cleanup_started=True;self.closing=True;self.browser.closing=True;self.set_active(False)
-        self.status.set('Clearing temporary local storage…');self.save_queue();self.root.after_cancel(self.poll_after);self.browser.dispose()
+        self.status.set('Clearing temporary local storage…');self.save_queue()
+        if self.poll_after:self.root.after_cancel(self.poll_after);self.poll_after=None
+        self.browser.dispose()
         self.cleanup_events=queue.Queue()
         def worker():
             try:
@@ -629,9 +782,19 @@ class App:
         self.save_queue()
         if errors:
             self.logger.error('Local storage cleanup incomplete: %s','; '.join(errors))
-            messagebox.showerror('Some temporary files could not be cleared','\n'.join(errors[:6])+'\n\nSee conversion.log for details.',parent=self.root)
+            # Cleanup failures are logged and retained for the next launch;
+            # an extra modal dialog must not block a confirmed close.
         self.closed=True;self.storage_lock.close();self.root.destroy()
 
-if __name__=='__main__':
-    try:App().root.mainloop()
-    except RuntimeError as error:messagebox.showerror('Video Queue',str(error))
+def main(argv=None):
+    """Launch the GUI, optionally using a separate application data directory."""
+    parser=argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--data-dir',type=Path,help='Use a separate directory for preferences, workflow and temporary files.')
+    parser.add_argument('videos',nargs='*',help='Optional external video paths.')
+    options=parser.parse_args(argv)
+    try:App(data=options.data_dir,files=options.videos).root.mainloop()
+    except RuntimeError as error:
+        messagebox.showerror('Video Queue',str(error));return 1
+    return 0
+
+if __name__=='__main__':raise SystemExit(main())
