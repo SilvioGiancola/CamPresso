@@ -12,7 +12,7 @@ enum NativeEncoder {
                        cancel: CancellationFlag, progress: @escaping (String, Double?) -> Void) async throws -> JSONObject {
         let inputs = try await MediaEncodingInputs.load(source, cancel: cancel)
         let result: JSONObject = try await withCheckedThrowingContinuation { continuation in
-            DispatchQueue.global(qos: .userInitiated).async {
+            DispatchQueue.global(qos: .utility).async {
                 do {
                     continuation.resume(returning: try encodeLoaded(source, inputs: inputs, params: params,
                         media: media, cancel: cancel, progress: progress))
@@ -264,11 +264,12 @@ enum NativeEncoder {
         func record(_ error: Error) { failureLock.lock(); if failure == nil { failure = error }; failureLock.unlock(); reader.cancelReading() }
         let working = CGColorSpace(name: hdr ? CGColorSpace.extendedLinearITUR_2020 : CGColorSpace.extendedLinearSRGB)!
         let outputColor = CGColorSpace(name: hdr ? (hlg ? CGColorSpace.itur_2100_HLG : CGColorSpace.itur_2100_PQ) : CGColorSpace.sRGB)!
-        let context = CIContext(options: [.workingColorSpace: working, .workingFormat: CIFormat.RGBAh])
+        let context = CIContext(options: [.workingColorSpace: working, .workingFormat: CIFormat.RGBAh,
+                                          .priorityRequestLow: true])
         group.enter()
         var videoFinished = false
         var lastProgress = 0.0
-        input.requestMediaDataWhenReady(on: DispatchQueue(label: "campresso.frames", qos: .userInitiated)) {
+        input.requestMediaDataWhenReady(on: DispatchQueue(label: "campresso.frames", qos: .utility)) {
             if videoFinished { return }
             while input.isReadyForMoreMediaData {
                 if cancel.isCancelled || reader.status == .cancelled {
@@ -308,7 +309,7 @@ enum NativeEncoder {
         for (index, stream) in streams.enumerated() {
             group.enter()
             var finished = false
-            stream.1.requestMediaDataWhenReady(on: DispatchQueue(label: "campresso.stream.\(index)", qos: .userInitiated)) {
+            stream.1.requestMediaDataWhenReady(on: DispatchQueue(label: "campresso.stream.\(index)", qos: .utility)) {
                 if finished { return }
                 while stream.1.isReadyForMoreMediaData {
                     if cancel.isCancelled || reader.status == .cancelled {

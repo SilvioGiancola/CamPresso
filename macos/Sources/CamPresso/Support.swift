@@ -91,6 +91,7 @@ final class AssetRepository: NSObject, PHPhotoLibraryChangeObserver, @unchecked 
     }
     func photoLibraryDidChange(_ changeInstance: PHChange) {
         lock.lock(); identifiers.removeAll(); lock.unlock()
+        ThumbnailService.shared.invalidate()
         NotificationCenter.default.post(name: .init("PhotosChanged"), object: nil)
     }
     func find(_ identifier: String, missingOK: Bool = false) throws -> PHAsset? {
@@ -124,17 +125,6 @@ final class AssetRepository: NSObject, PHPhotoLibraryChangeObserver, @unchecked 
               asset.pixelWidth == Int(number(expected["width"]) ?? 0),
               asset.pixelHeight == Int(number(expected["height"]) ?? 0) else {
             throw WorkflowError(message: "The recorded compressed Photos video no longer matches its verified result.")
-        }
-    }
-    func thumbnail(_ identifier: String) async -> NSImage? {
-        guard let asset = try? find(identifier) else { return nil }
-        return try? await withCheckedThrowingContinuation { continuation in
-            let once = Once<NSImage?>(continuation)
-            let options = PHImageRequestOptions(); options.isNetworkAccessAllowed = false
-            options.deliveryMode = .fastFormat; options.resizeMode = .fast
-            PHCachingImageManager.default().requestImage(for: asset, targetSize: .init(width: 400, height: 260), contentMode: .aspectFill, options: options) { image, _ in
-                once.finish(.success(image))
-            }
         }
     }
     func player(_ identifier: String) async throws -> AVPlayerItem {

@@ -26,6 +26,10 @@ The saved library is scanned automatically on launch. If catalog reading fails, 
 
 The gallery shows thumbnails, favorites (♥), duration, original size, estimated size reduction, cloud/local availability at the last catalog refresh, and one current status.
 
+Thumbnails use high-quality Photos posters at the screen’s pixel density. They are decoded in the background and kept in a bounded memory cache. Browsing does not download full cloud originals; poster availability still depends on Photos’ local cache. Refresh reloads edited posters, and a missing poster is retried after its video downloads.
+
+Progress updates refresh the active card instead of rebuilding the gallery. Conversion rendering runs at lower CPU/GPU scheduling priority, and playback verification uses a limited number of decoder threads so browsing remains the priority.
+
 - **Library:** all catalog entries, including tracked results.
 - **Processing:** work in progress, paused/retryable work and errors.
 - **Review:** saved compressed pairs awaiting a decision and items needing inspection.

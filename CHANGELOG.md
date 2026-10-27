@@ -1,6 +1,14 @@
 # Changelog
 
-## Unreleased — 4.1.2
+## Unreleased — 4.1.3
+
+- Restore sharp video posters with high-quality PhotoKit requests sized for the display scale, background decoding, cancellation and a bounded memory cache.
+- Keep thumbnail requests stable across processing stages; retry missing posters after download and refresh them after a catalog refresh.
+- Update progress through individual observable cards without replacing, re-sorting or redrawing the full gallery on every tick.
+- Write protocol packets off the main thread, lower conversion CPU/GPU scheduling priority and limit playback-verification decoding threads.
+- Verification: native compilation and static checks; live Photos/UI performance scenarios remain unrun.
+
+## 4.1.2
 
 - Refine the visual identity to an orange press, pale-cyan video capsule and dark-navy base with a heavy rounded wordmark.
 - Add monochrome and vertical-motion variants, an orange app icon, editable SVGs and a brand overview image.

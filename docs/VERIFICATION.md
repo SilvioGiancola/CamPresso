@@ -50,3 +50,13 @@ No test or live-library execution is implied by this checklist.
 - Run an old app while installing/cleaning: the storage lock blocks the operation. Conflicting unrecognized CamPresso data or app identity is retained with an actionable error.
 - Inspect SVG/transparent PNG/16–1024-pixel ICNS representations; the mark contains exactly three motion lines and the bundle references its icon.
 - Verify new repo URL, origin, main revision and all internal documentation links after publishing.
+
+## Thumbnail and responsiveness acceptance scenarios
+
+- On Retina and standard displays, compare local landscape/portrait posters with Photos: no fast/degraded image is retained as the final poster.
+- Scroll repeatedly while encoding/downloading/verifying: cached images stay sharp, offscreen requests cancel and only active cards/status text update per progress tick.
+- Search, select, change filters and open Settings during a long conversion; measure interaction latency separately from encode throughput on the target Mac.
+- Refresh after editing a Photos asset; check that its poster changes. A cloud asset with no local poster must not download its full original just for browsing; retry the poster after download.
+- Verify cache/concurrency bounds, correct batch counts, stable gallery ordering and prompt Stop/Close behavior under a mixed batch.
+
+These interactive scenarios have not been executed as part of the build/static checks.

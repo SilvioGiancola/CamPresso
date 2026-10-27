@@ -88,6 +88,12 @@ Frontend commands include `initialize`, `catalog.refresh`, `preferences.update`,
 
 Requests/replies are correlated independently; progress is asynchronous. The backend reader routes native replies directly to waiting workers rather than blocking behind commands. Workflow mutation uses an RLock; one backend owns each data directory via `.app.lock`. The UI owns its published state on the main actor. Media encoding runs on worker queues, with cancel checks, a stall watchdog and frame autorelease pools.
 
+Routine progress uses a small protocol-1 `event: progress` packet containing row/job/generation identity, revision, percentage and detail. It does not rebuild a catalog row or do recovery-file I/O. `VideoItem` publishes updates only to its card and the current processing message. The gallery caches filtering/sorting until inputs or membership/order actually change; phase-only updates in Library reuse the cached order. Framing/JSON decoding and serialized pipe writes use background queues; delivery to the main queue preserves packet order.
+
+`VideoThumbnail` requests a high-quality, exact-sized current poster using view dimensions and display scale. `ThumbnailService` bounds concurrency to three requests, decodes bitmaps off the main thread and uses a 48 MiB / 80-entry memory cache. Requests cancel when views leave the gallery, ignore degraded callbacks, and time out rather than occupying all slots indefinitely. Cache keys exclude conversion progress/state; catalog refresh, asset changes, target size and a changed surviving identifier invalidate the relevant poster. A newly prepared source retries a missing local poster without refetching a cached sharp image. Network access stays disabled for posters.
+
+The encoder uses utility-priority work/stream queues and Core Image’s low-priority rendering option without changing output settings. Independent full decoding remains mandatory; FFmpeg uses two decoder threads and one filter thread to limit CPU contention. Interactive frame-rate or live-library profiling is separate from build/static verification.
+
 `Transport.native` has a 30-minute response timeout. A timed-out Photos write is uncertain and blocks additional writes. The native gate remains authoritative even after a caller times out. Protocol version mismatches fail visibly; do not silently guess a packet shape.
 
 ## Scheduling and workflow

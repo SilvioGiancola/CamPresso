@@ -113,7 +113,7 @@ final class NativeMedia: @unchecked Sendable {
             let token = flag(id)
             defer { release(id) }
             return try await withCheckedThrowingContinuation { continuation in
-                let encoding = Task.detached(priority: .userInitiated) {
+                let encoding = Task.detached(priority: .utility) {
                     do { continuation.resume(returning: try await NativeEncoder.encode(item, params: params, media: self, cancel: token, progress: progress)) }
                     catch { continuation.resume(throwing: error) }
                 }

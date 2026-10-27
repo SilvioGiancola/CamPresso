@@ -196,6 +196,7 @@ class WorkflowController:
             if (job.get('original_version') or {}).get('duration'):
                 row['duration'] = job['original_version']['duration']
             row.update(job_id=job['id'], original_id=job.get('original_id'),
+                       preview_ready=bool(job.get('prepared')),
                        estimated_size=self.estimate(media, job.get('profile') or self.settings()),
                        recovery_bytes=self.recovery_bytes(job), operation=job.get('operation'),
                        operations=job.get('operations', []), legacy_journal=job.get('legacy_journal'),
@@ -272,8 +273,15 @@ class WorkflowController:
                 return
             self.last_progress[job['id']] = now
             percent = max(0, min(100, float(percent))) if isinstance(percent, (float, int)) else None
+            if percent == job.get('progress') and stage == job.get('detail'):
+                return
             job.update(progress=percent, detail=stage)
-            self.publish(job)
+            # Progress is a small per-card update. Do not rebuild catalog rows,
+            # perform recovery-file I/O or trigger a complete gallery refresh.
+            self.revision += 1
+            self.transport.send(dict(type='event', event='progress', revision=self.revision,
+                                     row_id=asset_key(job['source_uuid']), job_id=job['id'],
+                                     generation=job['generation'], percent=percent, detail=stage))
 
     def scan(self):
         with self.lock:

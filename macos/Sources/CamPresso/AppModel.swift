@@ -14,6 +14,7 @@ struct VideoRow: Identifiable {
     var detail: String { string(raw["detail"]) }
     var resultID: String { string(raw["result_id"]) }
     var originalID: String { string(raw["original_id"]).isEmpty ? id : string(raw["original_id"]) }
+    var thumbnailID: String { state == "Completed" && string(raw["decision"]) == "keep" ? resultID : originalID }
     var favorite: Bool { raw["favorite"] as? Bool == true }
     var local: Bool { raw["local"] as? Bool == true }
     var shared: Bool { raw["shared_library"] as? Bool == true || raw["shared_album"] as? Bool == true }
@@ -45,25 +46,55 @@ struct VideoRow: Identifiable {
     }
 }
 
+@MainActor
+final class VideoItem: ObservableObject, Identifiable {
+    let id: String
+    @Published private(set) var row: VideoRow
+    private var revision: Int
+
+    init(_ row: VideoRow, revision: Int) { id = row.id; self.row = row; self.revision = revision }
+    func replace(_ value: VideoRow, revision: Int) {
+        guard revision >= self.revision else { return }
+        self.revision = revision
+        row = value
+    }
+    func progress(_ packet: JSONObject) {
+        let revision = Int(number(packet["revision"]) ?? 0)
+        guard revision >= self.revision, row.processing,
+              string(packet["job_id"]) == row.jobID,
+              string(packet["generation"]) == string(row.raw["generation"]) else { return }
+        self.revision = revision
+        let percent = number(packet["percent"]), detail = string(packet["detail"])
+        guard percent != row.progress || detail != row.detail else { return }
+        var updated = row
+        updated.raw["progress"] = percent as Any? ?? NSNull()
+        updated.raw["detail"] = detail
+        row = updated
+    }
+}
+
 enum LibrarySection: String, CaseIterable, Identifiable {
     case library = "Library", processing = "Processing", review = "Review", completed = "Completed"
     var id: String { rawValue }
 }
 
 final class PacketWriter: @unchecked Sendable {
-    let lock = NSLock()
-    var input: FileHandle?
+    private let queue = DispatchQueue(label: "campresso.protocol.write", qos: .userInitiated)
+    private var input: FileHandle?
+    func connect(_ input: FileHandle) { queue.sync { self.input = input } }
     func send(_ value: JSONObject) {
-        guard let data = try? JSONSerialization.data(withJSONObject: ["protocol": 1].merging(value) { _, new in new }) else { return }
-        lock.lock(); defer { lock.unlock() }
-        try? input?.write(contentsOf: data + Data([10]))
+        queue.async {
+            guard let data = try? JSONSerialization.data(withJSONObject: ["protocol": 1].merging(value) { _, new in new }) else { return }
+            try? self.input?.write(contentsOf: data + Data([10]))
+        }
     }
-    func close() { lock.lock(); try? input?.close(); input = nil; lock.unlock() }
+    func close() { queue.async { try? self.input?.close(); self.input = nil } }
 }
 
 @MainActor
 final class AppModel: ObservableObject {
-    @Published var rows: [VideoRow] = []
+    @Published private(set) var items: [VideoItem] = []
+    @Published private(set) var thumbnailRevision = 0
     @Published var section: LibrarySection = .library
     @Published var selection = Set<String>()
     @Published var search = ""
@@ -97,6 +128,17 @@ final class AppModel: ObservableObject {
     private var playbackWindows: [NSWindow] = []
     private let reader = PacketReader()
     private var pipe: Pipe?
+    private var itemsByID: [String: VideoItem] = [:]
+    private var listRevision = 0
+    private var filteredCache: (key: GalleryFilter, items: [VideoItem])?
+    private struct GalleryFilter: Equatable {
+        let revision: Int
+        let section: String
+        let search: String
+        let sort: String
+        let favorites: Bool
+        let local: Bool
+    }
 
     init() {
         let arguments = CommandLine.arguments
@@ -107,15 +149,21 @@ final class AppModel: ObservableObject {
         data = URL(fileURLWithPath: option("--data-dir") ?? NSHomeDirectory()+"/Library/Application Support/CamPresso").resolvingSymlinksInPath()
         media = NativeMedia(data: data)
     }
-    var processing: [VideoRow] { rows.filter(\.processing) }
+    var rows: [VideoRow] { items.map(\.row) }
+    var processingItems: [VideoItem] { items.filter { $0.row.processing } }
+    var processing: [VideoRow] { processingItems.map(\.row) }
     var reviews: [VideoRow] { rows.filter { $0.state == "Ready to review" } }
     var chosen: [VideoRow] { rows.filter { selection.contains($0.id) } }
     var setupComplete: Bool {
         photoAuthorized && string(preferences["personal_library_confirmed"]) == library && !library.isEmpty
         && preferences["import_notice_accepted"] as? Bool == true
     }
-    var filtered: [VideoRow] {
-        let values = rows.filter { row in
+    var filteredItems: [VideoItem] {
+        let cacheKey = GalleryFilter(revision: listRevision, section: section.rawValue, search: search,
+                                    sort: sort, favorites: favoritesOnly, local: localOnly)
+        if let filteredCache, filteredCache.key == cacheKey { return filteredCache.items }
+        let values = items.filter { item in
+            let row = item.row
             let matches: Bool
             switch section {
             case .library: matches = true
@@ -126,7 +174,8 @@ final class AppModel: ObservableObject {
             return matches && (!favoritesOnly || row.favorite) && (!localOnly || row.local)
                 && (search.isEmpty || row.name.localizedCaseInsensitiveContains(search) || row.id.localizedCaseInsensitiveContains(search))
         }
-        return values.sorted { a, b in
+        let sorted = values.sorted { lhs, rhs in
+            let a = lhs.row, b = rhs.row
             switch sort {
             case "Filename": return a.name.localizedStandardCompare(b.name) == .orderedAscending
             case "Newest": return string(a.raw["date"]) > string(b.raw["date"])
@@ -136,7 +185,10 @@ final class AppModel: ObservableObject {
                 return lhs == rhs ? a.id < b.id : lhs > rhs
             }
         }
+        filteredCache = (cacheKey, sorted)
+        return sorted
     }
+    var filtered: [VideoRow] { filteredItems.map(\.row) }
     var compressionTargets: [VideoRow] {
         let candidates = selection.isEmpty ? filtered : chosen
         return candidates.filter { row in
@@ -148,6 +200,13 @@ final class AppModel: ObservableObject {
     }
     var batchTotal: Int { rows.filter { runIDs.contains($0.jobID) }.count }
     var batchProcessed: Int { rows.filter { runIDs.contains($0.jobID) && !$0.processing && $0.state != "Paused" }.count }
+
+    private func galleryOrderChanged(from old: VideoRow, to new: VideoRow) -> Bool {
+        (section != .library && old.state != new.state) || old.name != new.name
+            || old.favorite != new.favorite || old.local != new.local
+            || old.sourceSize != new.sourceSize || old.estimate != new.estimate
+            || string(old.raw["date"]) != string(new.raw["date"])
+    }
 
     func start() {
         guard !started else { return }; started = true
@@ -167,11 +226,11 @@ final class AppModel: ObservableObject {
             environment["PATH"] = "/opt/homebrew/bin:/usr/local/bin:" + (environment["PATH"] ?? "/usr/bin:/bin")
             environment["PYTHONUNBUFFERED"] = "1"; task.environment = environment
             let input = Pipe(), output = Pipe(); pipe = output
-            task.standardInput = input; task.standardOutput = output; writer.input = input.fileHandleForWriting
+            task.standardInput = input; task.standardOutput = output; writer.connect(input.fileHandleForWriting)
             let log = data.appendingPathComponent("native.log")
             if !FileManager.default.fileExists(atPath: log.path) { FileManager.default.createFile(atPath: log.path, contents: nil) }
             let errors = try FileHandle(forWritingTo: log); try errors.seekToEnd(); task.standardError = errors
-            reader.callback = { [weak self] packet in Task { @MainActor in self?.receive(packet) } }
+            reader.callback = { [weak self] packet in DispatchQueue.main.async { self?.receive(packet) } }
             let reader = reader
             output.fileHandleForReading.readabilityHandler = { handle in
                 let chunk = handle.availableData
@@ -222,7 +281,21 @@ final class AppModel: ObservableObject {
             switch string(packet["event"]) {
             case "snapshot":
                 let value = object(packet["data"])
-                rows = (value["rows"] as? [JSONObject] ?? []).map { VideoRow(raw: $0) }
+                let revision = Int(number(value["revision"]) ?? 0)
+                var updated: [VideoItem] = []
+                var indexed: [String: VideoItem] = [:]
+                for raw in value["rows"] as? [JSONObject] ?? [] {
+                    let row = VideoRow(raw: raw)
+                    guard !row.id.isEmpty, indexed[row.id] == nil else { continue }
+                    let item = itemsByID[row.id] ?? VideoItem(row, revision: revision)
+                    item.replace(row, revision: revision)
+                    updated.append(item); indexed[row.id] = item
+                }
+                itemsByID = indexed; items = updated
+                listRevision += 1; filteredCache = nil
+                if library != string(value["library"]) || scanning && value["scanning"] as? Bool != true {
+                    thumbnailRevision += 1
+                }
                 preferences = object(value["preferences"]); library = string(value["library"])
                 scanning = value["scanning"] as? Bool == true; paused = value["paused"] as? Bool == true
                 catalogError = value["catalog_error"] as? String; fatalError = value["fatal_error"] as? String
@@ -232,7 +305,19 @@ final class AppModel: ObservableObject {
                 retainedFiles = value["retained_files"] as? [JSONObject] ?? []
             case "job":
                 let row = VideoRow(raw: object(packet["row"]))
-                if let index = rows.firstIndex(where: { $0.id == row.id }) { rows[index] = row } else { rows.append(row) }
+                let revision = Int(number(packet["revision"]) ?? 0)
+                objectWillChange.send()
+                if let item = itemsByID[row.id] {
+                    if galleryOrderChanged(from: item.row, to: row) { listRevision += 1; filteredCache = nil }
+                    item.replace(row, revision: revision)
+                }
+                else {
+                    listRevision += 1; filteredCache = nil
+                    let item = VideoItem(row, revision: revision)
+                    itemsByID[row.id] = item; items.append(item)
+                }
+            case "progress":
+                itemsByID[string(packet["row_id"])]?.progress(packet)
             case "notice": notice = string(packet["message"])
             case "fatal": fatalError = string(packet["message"])
             case "shutdownReady": finishNativeClose()

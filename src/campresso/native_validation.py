@@ -36,7 +36,8 @@ def verify_output(path, expected, source_size, cancel, report):
     if len(audio) != expected.get('audio_count', len(audio)):
         raise RuntimeError('Compressed audio track verification failed.')
     report('Checking complete playback', None)
-    converter.run([converter.tools['ffmpeg'], '-v', 'error', '-xerror', '-i', str(path),
+    converter.run([converter.tools['ffmpeg'], '-v', 'error', '-xerror', '-threads', '2',
+                   '-filter_threads', '1', '-i', str(path),
                    '-map', '0:v:0', '-map', '0:a?', '-f', 'null', '-'])
     size = Path(path).stat().st_size
     if not source_size:

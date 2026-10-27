@@ -91,7 +91,7 @@ struct LibraryView: View {
     }
     private func count(_ section: LibrarySection) -> String {
         switch section {
-        case .library: return " · \(model.rows.count)"
+        case .library: return " · \(model.items.count)"
         case .processing: return " · \(model.processing.count)"
         case .review: return " · \(model.reviews.count)"
         case .completed: return " · \(model.rows.filter { $0.state == "Completed" }.count)"
@@ -104,8 +104,9 @@ struct LibraryView: View {
                     .frame(maxWidth: .infinity, minHeight: 350)
             } else {
                 LazyVGrid(columns: [GridItem(.adaptive(minimum: 205, maximum: 290), spacing: 14)], spacing: 14) {
-                    ForEach(model.filtered) { row in
-                        VideoCard(row: row, selected: model.selection.contains(row.id))
+                    ForEach(model.filteredItems) { item in
+                        let row = item.row
+                        VideoCard(item: item, selected: model.selection.contains(row.id), thumbnailRevision: model.thumbnailRevision)
                             .onTapGesture { if model.selection.contains(row.id) { model.selection.remove(row.id) } else { model.selection.insert(row.id) } }
                             .onTapGesture(count: 2) { if row.state == "Ready to review" { model.review(row) } else { model.play(row) } }
                             .contextMenu {
@@ -147,7 +148,7 @@ struct LibraryView: View {
                 HStack {
                     ProgressView(value: Double(model.batchProcessed), total: Double(max(1, model.batchTotal))).frame(maxWidth: 200)
                     Text("\(model.batchProcessed) of \(model.batchTotal) processed").font(.caption).monospacedDigit()
-                    if let row = model.processing.first { Text(row.detail.isEmpty ? row.state : row.detail).font(.caption).foregroundStyle(.secondary).lineLimit(1) }
+                    if let item = model.processingItems.first { ProcessingDetail(item: item) }
                     Spacer()
                     Button(model.paused ? "Resume" : "Pause") { model.action(model.paused ? "jobs.resume" : "jobs.pause") }
                     Button("Stop") { model.action("jobs.stop") }.disabled(model.processing.isEmpty)
@@ -187,15 +188,15 @@ struct LibraryView: View {
 }
 
 struct VideoCard: View {
-    let row: VideoRow
+    @ObservedObject var item: VideoItem
     let selected: Bool
-    @State private var image: NSImage?
+    let thumbnailRevision: Int
+    private var row: VideoRow { item.row }
     var body: some View {
         VStack(alignment: .leading, spacing: 7) {
             ZStack(alignment: .topLeading) {
-                Color.black.opacity(0.08)
-                if let image { Image(nsImage: image).resizable().scaledToFill().frame(maxWidth: .infinity, maxHeight: .infinity).clipped() }
-                else { Image(systemName: "video.fill").font(.largeTitle).foregroundStyle(.tertiary).frame(maxWidth: .infinity, maxHeight: .infinity) }
+                VideoThumbnail(identifier: row.thumbnailID, revision: thumbnailRevision,
+                               downloaded: row.raw["preview_ready"] as? Bool == true)
                 HStack(spacing: 7) {
                     Image(systemName: selected ? "checkmark.circle.fill" : "circle").foregroundStyle(selected ? Color.accentColor : .white)
                     if row.favorite { Image(systemName: "heart.fill").foregroundStyle(.pink) }
@@ -221,10 +222,14 @@ struct VideoCard: View {
         .padding(9).background(selected ? Color.accentColor.opacity(0.09) : Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 12))
         .overlay(RoundedRectangle(cornerRadius: 12).stroke(selected ? Color.accentColor : Color.secondary.opacity(0.15), lineWidth: selected ? 2 : 1))
         .accessibilityElement(children: .combine).accessibilityLabel("\(row.name), \(row.state), \(row.local ? "local" : "stored in iCloud")")
-        .task(id: row.resultID + row.state) {
-            let identifier = row.state == "Completed" && string(row.raw["decision"]) == "keep" ? row.resultID : row.originalID
-            image = await AssetRepository.shared.thumbnail(identifier)
-        }
+    }
+}
+
+private struct ProcessingDetail: View {
+    @ObservedObject var item: VideoItem
+    var body: some View {
+        Text(item.row.detail.isEmpty ? item.row.state : item.row.detail)
+            .font(.caption).foregroundStyle(.secondary).lineLimit(1)
     }
 }
 
