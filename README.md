@@ -4,6 +4,8 @@
 
 **Action, packed lighter**
 
+**[Visit the CamPresso website →](https://silviogiancola.github.io/CamPresso/)** · What it does, installation and your first compression.
+
 A native **macOS 26+** app for reducing the size of videos in your personal Apple Photos library.
 
 **Select videos → Compress → Review → Keep Compressed or Revert**
@@ -54,6 +56,7 @@ macos/             SwiftUI app, AVKit comparison, PhotoKit transactions, encoder
 src/campresso/   Headless Python scheduler, catalog, persistence, legacy helpers
 scripts/           Native build, installer, Photos Service and static checks
 docs/              User, developer and verification guides
+website/           GitHub Pages landing page and onboarding
 tests/             Existing Python tests, including legacy GUI checks
 pyproject.toml     Python package metadata, dependencies and release version
 ```

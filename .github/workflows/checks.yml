@@ -22,5 +22,7 @@ jobs:
           python-version: '3.13'
       - name: Check repository structure and syntax
         run: python scripts/check_repository.py
+      - name: Build and check the landing page
+        run: python scripts/build_site.py
       - name: Check whitespace
         run: git diff --check HEAD^ HEAD

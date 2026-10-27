@@ -2,6 +2,14 @@
 
 [README](../README.md) · [User guide](USER_GUIDE.md) · [Verification](VERIFICATION.md)
 
+## Landing page
+
+The public landing page is [silviogiancola.github.io/CamPresso](https://silviogiancola.github.io/CamPresso/). Its source is plain HTML/CSS with optional clipboard JavaScript in `website/`; no framework, dependencies, analytics or external asset requests are needed. Canonical, social-preview and favicon metadata are included. The illustrated workflow is labeled as an example rather than a real screenshot or measured compression result.
+
+Build with `python3 scripts/build_site.py --output /tmp/campresso-site-preview` (choose a new output folder). The builder checks local HTML assets/anchors and copies the shared brand assets from `assets/brand/`. To preview, run `python3 -m http.server 8000 --directory /tmp/campresso-site-preview` and open `http://localhost:8000`. Stop the server when finished.
+
+`.github/workflows/pages.yml` builds and publishes changes to website files, the builder or brand assets on `main`, and can also be run manually. Repository Settings → Pages must use **GitHub Actions**. Only the assembled `_site/` is published; app code, journals and user data are not included. Keep setup instructions and feature claims aligned with the user guide when the app changes. Pages deployment does not build or launch CamPresso or access Photos.
+
 ## Requirements and builds
 
 The application targets **macOS 26+**, **Swift 6.2+** and Python **3.13**. Install Xcode 26+ and select its developer directory. The native executable is a Swift package without external Swift dependencies. Python uses `osxphotos==0.77.2` for the read-only catalog; FFmpeg/ffprobe perform independent output validation. The retained Python conversion engine also expects ExifTool.

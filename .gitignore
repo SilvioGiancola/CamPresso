@@ -37,3 +37,6 @@ htmlcov/
 .swiftpm/
 DerivedData/
 *.app/
+
+# GitHub Pages build output
+_site/
