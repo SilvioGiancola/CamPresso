@@ -26,7 +26,13 @@ if ! xcrun --find swift >/dev/null 2>&1; then
   echo 'Install Xcode 26 or later (including its Swift toolchain), then retry.' >&2
   exit 1
 fi
-brew install python@3.13 ffmpeg exiftool
+for formula in python@3.13 ffmpeg exiftool; do
+  if brew list --versions "$formula" >/dev/null 2>&1; then
+    echo "Using installed dependency: $formula"
+  else
+    brew install "$formula"
+  fi
+done
 PYTHON="$(brew --prefix python@3.13)/bin/python3.13"
 "$PYTHON" "$REPO_ROOT/scripts/install_macos.py"
 open "$HOME/Applications/CamPresso.app"

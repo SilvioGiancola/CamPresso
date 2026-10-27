@@ -26,11 +26,11 @@ final class PreparedVideo: @unchecked Sendable {
     let audioMix: AVAudioMix?
     let version: JSONObject
     let temporary: URL?
-    init(asset: AVAsset, source: PHAsset, session: AVAssetExportSession, temporary: URL? = nil) {
+    init(asset: AVAsset, source: PHAsset, session: AVAssetExportSession, duration: CMTime, temporary: URL? = nil) {
         self.asset = asset; self.source = source; self.session = session; self.temporary = temporary
         let range = session.timeRange
         self.range = temporary != nil || !range.isValid || !range.duration.seconds.isFinite || range.duration.seconds <= 0
-            ? CMTimeRange(start: .zero, duration: asset.duration) : range
+            ? CMTimeRange(start: .zero, duration: duration) : range
         self.composition = temporary == nil ? session.videoComposition : nil
         self.audioMix = temporary == nil ? session.audioMix : nil
         self.version = AssetRepository.shared.version(source)
@@ -102,8 +102,8 @@ final class NativeMedia: @unchecked Sendable {
             else { cancel() }
             return [:]
         }
-        lock.lock(); operationCount += 1; lock.unlock()
-        defer { lock.lock(); operationCount -= 1; lock.unlock() }
+        lock.withLock { operationCount += 1 }
+        defer { lock.withLock { operationCount -= 1 } }
         try authorized()
         switch method {
         case "prepare": return try await prepare(params, progress: progress)
@@ -113,10 +113,11 @@ final class NativeMedia: @unchecked Sendable {
             let token = flag(id)
             defer { release(id) }
             return try await withCheckedThrowingContinuation { continuation in
-                DispatchQueue.global(qos: .userInitiated).async {
-                    do { continuation.resume(returning: try NativeEncoder.encode(item, params: params, media: self, cancel: token, progress: progress)) }
+                let encoding = Task.detached(priority: .userInitiated) {
+                    do { continuation.resume(returning: try await NativeEncoder.encode(item, params: params, media: self, cancel: token, progress: progress)) }
                     catch { continuation.resume(throwing: error) }
                 }
+                token.add { encoding.cancel() }
             }
         case "import", "decide", "inspect":
             await transactions.enter()
@@ -173,28 +174,28 @@ final class NativeMedia: @unchecked Sendable {
             temporary = rendered
             try ensureSpace(Int64(number(params["source_size"]) ?? 0) * 4)
             try? FileManager.default.removeItem(at: rendered)
-            session.outputURL = rendered; session.outputFileType = .mov
             cancellation.add { session.cancelExport() }
             progress("Rendering Photos edits", nil)
-            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
-                let once = Once(continuation)
-                cancellation.add { session.cancelExport(); once.finish(.failure(CancellationError())) }
-                session.exportAsynchronously {
-                    if session.status == .completed { once.finish(.success(())) }
-                    else { once.finish(.failure(session.error ?? WorkflowError(message: "Photos could not render these edits. Original kept.", code: "unsupported"))) }
-                }
+            do {
+                try await session.export(to: rendered, as: .mov)
+            } catch {
+                try cancellation.check()
+                throw WorkflowError(message: "Photos could not render these edits. Original kept. \(error.localizedDescription)", code: "unsupported")
             }
+            try cancellation.check()
             temporary = rendered; asset = AVURLAsset(url: rendered)
         }
         guard let fresh = try repository.find(source.localIdentifier), sameJSON(before, repository.version(fresh)) else {
             throw WorkflowError(message: "The Photos video changed during preparation. Refresh and retry.")
         }
-        guard asset.isReadable, !asset.hasProtectedContent, !asset.tracks(withMediaType: .video).isEmpty else {
+        let (readable, protected, duration) = try await asset.load(.isReadable, .hasProtectedContent, .duration)
+        let videoTracks = try await asset.loadTracks(withMediaType: .video)
+        guard readable, !protected, !videoTracks.isEmpty else {
             throw WorkflowError(message: "This protected or unreadable video cannot be compressed.", code: "unsupported")
         }
-        let item = PreparedVideo(asset: asset, source: fresh, session: session, temporary: temporary)
+        let item = PreparedVideo(asset: asset, source: fresh, session: session, duration: duration, temporary: temporary)
         try cancellation.check()
-        lock.lock(); prepared[id] = item; lock.unlock()
+        lock.withLock { prepared[id] = item }
         retained = true
         return ["original_id": fresh.localIdentifier, "original_version": item.version]
     }

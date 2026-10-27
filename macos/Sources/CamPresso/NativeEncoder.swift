@@ -9,17 +9,59 @@ import VideoToolbox
 
 enum NativeEncoder {
     static func encode(_ source: PreparedVideo, params: JSONObject, media: NativeMedia,
-                       cancel: CancellationFlag, progress: @escaping (String, Double?) -> Void) throws -> JSONObject {
+                       cancel: CancellationFlag, progress: @escaping (String, Double?) -> Void) async throws -> JSONObject {
+        let inputs = try await MediaEncodingInputs.load(source, cancel: cancel)
+        let result: JSONObject = try await withCheckedThrowingContinuation { continuation in
+            DispatchQueue.global(qos: .userInitiated).async {
+                do {
+                    continuation.resume(returning: try encodeLoaded(source, inputs: inputs, params: params,
+                        media: media, cancel: cancel, progress: progress))
+                } catch { continuation.resume(throwing: error) }
+            }
+        }
+        try cancel.check()
+        if object(result["expected"])["hdr"] as? Bool == true {
+            let encoded = AVURLAsset(url: try media.safeFile(string(params["output"])))
+            let encodedTracks = try await encoded.loadTracks(withMediaType: .video)
+            guard let encodedTrack = encodedTracks.first,
+                  let description = try await encodedTrack.load(.formatDescriptions).first,
+                  let sourceTrack = inputs.videoTracks.first,
+                  let sourceDescription = inputs.descriptions[sourceTrack.trackID]?.first else {
+                throw WorkflowError(message: "Cannot verify the encoded HDR track.")
+            }
+            let original = (CMFormatDescriptionGetExtensions(sourceDescription) as NSDictionary?) ?? [:]
+            let output = (CMFormatDescriptionGetExtensions(description) as NSDictionary?) ?? [:]
+            for field in [kCMFormatDescriptionExtension_TransferFunction, kCMFormatDescriptionExtension_ColorPrimaries,
+                          kCMFormatDescriptionExtension_MasteringDisplayColorVolume, kCMFormatDescriptionExtension_ContentLightLevelInfo,
+                          kCMFormatDescriptionExtension_AmbientViewingEnvironment] {
+                if let wanted = original[field] as? NSObject, output[field] as? NSObject != wanted {
+                    throw WorkflowError(message: "HDR verification failed: color or static HDR metadata did not survive. Original kept.", code: "unsupported")
+                }
+            }
+        }
+        try cancel.check()
+        return result
+    }
+
+    private static func encodeLoaded(_ source: PreparedVideo, inputs: MediaEncodingInputs, params: JSONObject,
+                                     media: NativeMedia, cancel: CancellationFlag,
+                                     progress: @escaping (String, Double?) -> Void) throws -> JSONObject {
         try cancel.check()
         let asset = source.asset
-        guard let track = asset.tracks(withMediaType: .video).first,
-              let rawDescription = track.formatDescriptions.first else {
+        let videoTracks = inputs.videoTracks
+        guard let track = videoTracks.first else {
             throw WorkflowError(message: "The Photos rendition has no readable video track.", code: "unsupported")
         }
-        let description = rawDescription as! CMFormatDescription
+        let characteristics = inputs.characteristics
+        let nominalRate = inputs.nominalRate
+        let naturalSize = inputs.naturalSize
+        let preferredTransform = inputs.preferredTransform
+        guard let description = inputs.descriptions[track.trackID]?.first else {
+            throw WorkflowError(message: "The Photos rendition has no readable video track.", code: "unsupported")
+        }
         let extensions = (CMFormatDescriptionGetExtensions(description) as NSDictionary?) ?? [:]
         let text = extensions.description.lowercased()
-        if source.source.mediaSubtypes.contains(.spatialMedia) || track.hasMediaCharacteristic(.containsAlphaChannel)
+        if source.source.mediaSubtypes.contains(.spatialMedia) || characteristics.contains(.containsAlphaChannel)
             || text.contains("applelog") || text.contains("stereoview") || text.contains("projectionkind") {
             throw WorkflowError(message: "Alpha, Apple Log, spatial and immersive video need specialized preservation and are not converted.", code: "unsupported")
         }
@@ -27,7 +69,7 @@ enum NativeEncoder {
         let hlg = transfer == (kCVImageBufferTransferFunction_ITU_R_2100_HLG as String)
         let pq = transfer == (kCVImageBufferTransferFunction_SMPTE_ST_2084_PQ as String)
         let hdr = hlg || pq
-        if track.hasMediaCharacteristic(.containsHDRVideo) && !hdr {
+        if characteristics.contains(.containsHDRVideo) && !hdr {
             throw WorkflowError(message: "This HDR transfer function is not supported safely. Original kept.", code: "unsupported")
         }
         if let aspect = extensions[kCMFormatDescriptionExtension_PixelAspectRatio] as? NSDictionary,
@@ -46,9 +88,9 @@ enum NativeEncoder {
         let preset = string(profile["preset"])
         let reference: Double = ["Gentle": 7_500_000.0, "Standard": 4_500_000.0, "High": 3_000_000.0, "Maximum": 1_500_000.0][preset] ?? 4_500_000
         let compositionFPS = source.composition.map { 1 / $0.frameDuration.seconds } ?? 0
-        let nominal = compositionFPS.isFinite && compositionFPS > 0 ? compositionFPS : track.nominalFrameRate > 0 ? Double(track.nominalFrameRate) : 30
+        let nominal = compositionFPS.isFinite && compositionFPS > 0 ? compositionFPS : nominalRate > 0 ? Double(nominalRate) : 30
         let fps = min(nominal, preset == "Maximum" ? 30 : preset == "Gentle" ? nominal : 60)
-        let displayed = source.composition?.renderSize ?? track.naturalSize.applying(track.preferredTransform)
+        let displayed = source.composition?.renderSize ?? naturalSize.applying(preferredTransform)
         let sourceWidth = abs(displayed.width), sourceHeight = abs(displayed.height)
         guard sourceWidth > 0, sourceHeight > 0, source.range.duration.seconds > 0 else {
             throw WorkflowError(message: "Invalid rendered dimensions or duration.", code: "unsupported")
@@ -70,7 +112,7 @@ enum NativeEncoder {
         let writer = try AVAssetWriter(outputURL: outputURL, fileType: string(profile["container"]) == "MOV" ? .mov : .mp4)
         var completed = false
         defer { if !completed { reader.cancelReading(); writer.cancelWriting() } }
-        writer.metadata = asset.metadata
+        writer.metadata = inputs.metadata
         if let date = source.source.creationDate {
             let item = AVMutableMetadataItem(); item.identifier = .commonIdentifierCreationDate
             item.value = ISO8601DateFormatter().string(from: date) as NSString
@@ -108,19 +150,17 @@ enum NativeEncoder {
             kCVPixelBufferPixelFormatTypeKey as String: pixelFormat,
             kCVPixelBufferWidthKey as String: width, kCVPixelBufferHeightKey as String: height,
             kCVPixelBufferIOSurfacePropertiesKey as String: [:]])
-        let videoOutput = AVAssetReaderVideoCompositionOutput(videoTracks: asset.tracks(withMediaType: .video), videoSettings: [kCVPixelBufferPixelFormatTypeKey as String: pixelFormat])
-        let composition: AVMutableVideoComposition
-        if let existing = source.composition?.mutableCopy() as? AVMutableVideoComposition { composition = existing }
-        else { composition = AVMutableVideoComposition(propertiesOf: asset) }
+        let videoOutput = AVAssetReaderVideoCompositionOutput(videoTracks: videoTracks, videoSettings: [kCVPixelBufferPixelFormatTypeKey as String: pixelFormat])
+        var configuration = inputs.configuration
         // Apply Photos' crop/transforms at its own render size first. The final
         // Core Image scale below cannot accidentally crop an existing edit.
-        composition.frameDuration = CMTime(seconds: 1/max(fps, 1), preferredTimescale: 60000)
+        configuration.frameDuration = CMTime(seconds: 1/max(fps, 1), preferredTimescale: 60000)
         if hdr {
-            composition.colorPrimaries = AVVideoColorPrimaries_ITU_R_2020
-            composition.colorTransferFunction = hlg ? AVVideoTransferFunction_ITU_R_2100_HLG : AVVideoTransferFunction_SMPTE_ST_2084_PQ
-            composition.colorYCbCrMatrix = AVVideoYCbCrMatrix_ITU_R_2020
+            configuration.colorPrimaries = AVVideoColorPrimaries_ITU_R_2020
+            configuration.colorTransferFunction = hlg ? AVVideoTransferFunction_ITU_R_2100_HLG : AVVideoTransferFunction_SMPTE_ST_2084_PQ
+            configuration.colorYCbCrMatrix = AVVideoYCbCrMatrix_ITU_R_2020
         }
-        videoOutput.videoComposition = composition
+        videoOutput.videoComposition = AVVideoComposition(configuration: configuration)
         videoOutput.alwaysCopiesSampleData = false
         guard reader.canAdd(videoOutput) else { throw WorkflowError(message: "Photos' current edit cannot be rendered safely.", code: "unsupported") }
         reader.add(videoOutput)
@@ -128,36 +168,35 @@ enum NativeEncoder {
         if dolby { warnings.append("HDR is kept as HLG; Dolby Vision dynamic metadata is not retained.") }
         if source.source.mediaSubtypes.contains(.videoCinematic) { warnings.append("The current Cinematic appearance is rendered; depth and focus editability are not retained.") }
         var streams: [(AVAssetReaderOutput, AVAssetWriterInput)] = []
-        let audioTracks = asset.tracks(withMediaType: .audio)
+        let audioTracks = inputs.audioTracks
+        let trackGroups = inputs.trackGroups
+        let audioDescriptions = inputs.descriptions
+        let enabledAudioIDs = inputs.enabledAudioIDs
         let spatial = audioTracks.contains { audio in
-            audio.formatDescriptions.contains { value in
-                let description = value as! CMFormatDescription
-                return CMFormatDescriptionGetMediaSubType(description) == kAudioFormatAPAC
-            }
+            (audioDescriptions[audio.trackID] ?? []).contains { CMFormatDescriptionGetMediaSubType($0) == kAudioFormatAPAC }
         }
-        let passthrough = spatial && source.audioMix == nil && asset is AVURLAsset && source.range.start == .zero && abs(source.range.duration.seconds-asset.duration.seconds) < 0.01
+        let passthrough = spatial && source.audioMix == nil && asset is AVURLAsset && source.range.start == .zero && abs(source.range.duration.seconds-inputs.duration.seconds) < 0.01
         var audioCount = 0
         var mappings: [CMPersistentTrackID: AVAssetWriterInput] = [:]
         if passthrough {
             for track in audioTracks {
                 let output = AVAssetReaderTrackOutput(track: track, outputSettings: nil)
-                guard let rawHint = track.formatDescriptions.first else {
+                guard let hint = audioDescriptions[track.trackID]?.first else {
                     throw WorkflowError(message: "An audio track has no readable format description.", code: "unsupported")
                 }
-                let hint = rawHint as! CMFormatDescription
                 let audioInput = AVAssetWriterInput(mediaType: .audio, outputSettings: nil, sourceFormatHint: hint)
                 guard reader.canAdd(output), writer.canAdd(audioInput) else {
                     throw WorkflowError(message: "This container cannot preserve the spatial audio. Choose MOV or use another video.", code: "unsupported")
                 }
-                audioInput.marksOutputTrackAsEnabled = track.isEnabled
+                audioInput.marksOutputTrackAsEnabled = enabledAudioIDs.contains(track.trackID)
                 reader.add(output); writer.add(audioInput)
                 streams.append((output, audioInput)); mappings[track.trackID] = audioInput
             }
-            for group in asset.trackGroups {
+            for group in trackGroups {
                 let ids = group.trackIDs.map { $0.int32Value }
                 let members = ids.compactMap { mappings[$0] }
                 if members.count > 1 {
-                    let enabled = audioTracks.first { ids.contains($0.trackID) && $0.isEnabled }
+                    let enabled = audioTracks.first { ids.contains($0.trackID) && enabledAudioIDs.contains($0.trackID) }
                     let defaultInput = enabled.flatMap { mappings[$0.trackID] } ?? members.first
                     let inputGroup = AVAssetWriterInputGroup(inputs: members, defaultInput: defaultInput)
                     if writer.canAdd(inputGroup) { writer.add(inputGroup) }
@@ -166,7 +205,7 @@ enum NativeEncoder {
             }
             for track in audioTracks {
                 guard let origin = mappings[track.trackID] else { continue }
-                for fallback in track.associatedTracks(ofType: .audioFallback) {
+                for fallback in inputs.audioFallbacks[track.trackID] ?? [] {
                     if let target = mappings[fallback.trackID], origin.canAddTrackAssociation(withTrackOf: target, type: AVAssetTrack.AssociationType.audioFallback.rawValue) {
                         origin.addTrackAssociation(withTrackOf: target, type: AVAssetTrack.AssociationType.audioFallback.rawValue)
                     }
@@ -175,15 +214,15 @@ enum NativeEncoder {
             audioCount = mappings.count
         } else if !audioTracks.isEmpty {
             let included = Set(source.audioMix?.inputParameters.map { $0.trackID } ?? [])
-            var selected = audioTracks.filter { included.isEmpty ? $0.isEnabled : included.contains($0.trackID) }
+            var selected = audioTracks.filter { included.isEmpty ? enabledAudioIDs.contains($0.trackID) : included.contains($0.trackID) }
             if selected.isEmpty { selected = [audioTracks[0]] }
             // Alternate tracks are alternative renderings of the same sound.
             // They must never be mixed together (e.g. Spatial Audio plus AAC).
-            for group in asset.trackGroups {
+            for group in trackGroups {
                 let ids = Set(group.trackIDs.map { $0.int32Value })
                 let alternatives = selected.filter { ids.contains($0.trackID) }
                 if alternatives.count > 1 {
-                    let keep = alternatives.first { $0.isEnabled } ?? alternatives[0]
+                    let keep = alternatives.first { enabledAudioIDs.contains($0.trackID) } ?? alternatives[0]
                     selected.removeAll { ids.contains($0.trackID) && $0.trackID != keep.trackID }
                 }
             }
@@ -200,11 +239,12 @@ enum NativeEncoder {
             reader.add(output); writer.add(audioInput); streams.append((output, audioInput)); audioCount = 1
             if spatial { warnings.append("Edited spatial audio is rendered to stereo AAC; spatial editability is not retained.") }
         }
-        for extra in asset.tracks where [.timecode, .subtitle, .text, .closedCaption].contains(extra.mediaType) {
+        for extra in inputs.ancillaryTracks {
+            let formats = inputs.descriptions[extra.trackID] ?? []
             if source.audioMix == nil, source.composition == nil, asset is AVURLAsset,
-               let rawHint = extra.formatDescriptions.first {
+               let hint = formats.first {
                 let output = AVAssetReaderTrackOutput(track: extra, outputSettings: nil)
-                let extraInput = AVAssetWriterInput(mediaType: extra.mediaType, outputSettings: nil, sourceFormatHint: rawHint as! CMFormatDescription)
+                let extraInput = AVAssetWriterInput(mediaType: extra.mediaType, outputSettings: nil, sourceFormatHint: hint)
                 if reader.canAdd(output), writer.canAdd(extraInput) {
                     reader.add(output); writer.add(extraInput); streams.append((output, extraInput)); continue
                 }
@@ -301,20 +341,6 @@ enum NativeEncoder {
             if ProcessInfo.processInfo.systemUptime-finishing > 120 { throw WorkflowError(message: "The encoder did not finish publishing its output.") }
         }
         guard writer.status == .completed else { throw writer.error ?? WorkflowError(message: "The hardware encoder did not finish.") }
-        if hdr {
-            let encoded = AVURLAsset(url: outputURL)
-            guard let raw = encoded.tracks(withMediaType: .video).first?.formatDescriptions.first else {
-                throw WorkflowError(message: "Cannot verify the encoded HDR track.")
-            }
-            let encodedExtensions = (CMFormatDescriptionGetExtensions(raw as! CMFormatDescription) as NSDictionary?) ?? [:]
-            for field in [kCMFormatDescriptionExtension_TransferFunction, kCMFormatDescriptionExtension_ColorPrimaries,
-                          kCMFormatDescriptionExtension_MasteringDisplayColorVolume, kCMFormatDescriptionExtension_ContentLightLevelInfo,
-                          kCMFormatDescriptionExtension_AmbientViewingEnvironment] {
-                if let wanted = extensions[field] as? NSObject, !(encodedExtensions[field] as? NSObject == wanted) {
-                    throw WorkflowError(message: "HDR verification failed: color or static HDR metadata did not survive. Original kept.", code: "unsupported")
-                }
-            }
-        }
         completed = true
         return ["expected": ["width": width, "height": height, "duration": source.range.duration.seconds,
                               "hdr": hdr, "transfer": hlg ? "HLG" : pq ? "PQ" : "SDR", "audio_count": audioCount,

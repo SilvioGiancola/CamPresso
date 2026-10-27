@@ -20,7 +20,7 @@ python scripts/check_repository.py
 git diff --check
 ```
 
-The build command requires a new destination, builds Release without debug symbols into a temporary directory, embeds the bundle metadata/permission descriptions and signs the result. In an already sandboxed build host that cannot nest SwiftPM’s compiler sandbox, its explicit `--disable-swift-sandbox` option disables only that nested build sandbox. It builds for the host architecture. It does not create a notarized universal distribution. `macos/Package.swift` selects Swift 5 language mode on the Swift 6 toolchain; adopting full Swift 6 strict concurrency is future work. Some synchronous AVFoundation accessors remain deprecated but are used off the UI thread.
+The build command requires a new destination, builds Release without debug symbols into a temporary directory, embeds the bundle metadata/permission descriptions and signs the result. In an already sandboxed build host that cannot nest SwiftPM’s compiler sandbox, its explicit `--disable-swift-sandbox` option disables only that nested build sandbox. It builds for the host architecture. It does not create a notarized universal distribution. `macos/Package.swift` selects Swift 5 language mode on the Swift 6 toolchain; adopting full Swift 6 strict concurrency is future work. Media/track properties load asynchronously before a dedicated encoding worker starts. Video compositions use the macOS 26 configuration API, preserving Photos instructions and rendering options. Native export uses the asynchronous export API and scoped locks protect shared bookkeeping.
 
 For incremental frontend development:
 
@@ -162,6 +162,8 @@ Cleanup is restricted to known app-created filenames in NativeWork, excluding sy
 ## Installer and Service
 
 `Install.command` delegates to `scripts/install.sh`; `install_macos.py` holds the data lock, builds the native bundle first, installs the package from a temporary source copy, rebuilds/registers the Service, then publishes the app bundle and Service. The first rebrand installation starts with fresh settings/history and protected legacy recovery; later updates preserve CamPresso data. `build_macos.py` sets deployment target/usage strings/entitlements and ad hoc signs the bundle. A trusted distribution would need an identity, hardened-runtime review and notarization separately.
+
+The shell installer reuses installed Homebrew formulae and installs only missing dependencies; dependency upgrades remain an explicit Homebrew action. Compiler warnings and installation errors remain visible.
 
 The Automator Service uses the bundled AppleScript to extract exact selected IDs, invokes `python -m campresso.photos_service`, writes `Requests/<uuid>.json` and opens the installed app. The backend accepts protocol 1 / `convert1080`, validates IDs against the loaded video catalog and queues the same compression workflow with a 1080p override. Setup must already allow writes. A Service request never includes deletion approval. The request wire format remains compatible; the new Service uses the CamPresso data root.
 

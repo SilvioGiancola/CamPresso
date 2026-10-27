@@ -1,6 +1,13 @@
 # Changelog
 
-## Unreleased — 4.1.0 CamPresso
+## Unreleased — 4.1.1
+
+- Load AVFoundation asset/track properties asynchronously and use macOS 26 video-composition configurations while preserving Photos rendering instructions.
+- Keep frame encoding and bounded watchdog waits on a dedicated worker; use scoped native locks and the asynchronous export API.
+- Reuse installed Homebrew dependencies and install only missing tools, avoiding misleading already-installed warnings.
+- Verification: Debug/Release compilation and static checks; no tests or live Photos operations.
+
+## 4.1.0 — CamPresso
 
 - Rebrand app, executable, Swift target, Python package/CLI, Service, documentation and GitHub links as CamPresso — Action, packed lighter.
 - Add editable espresso/orange/cream vector logos, transparent PNGs and a bundled macOS icon, with deterministic export tooling.
