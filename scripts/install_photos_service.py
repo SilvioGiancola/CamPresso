@@ -3,15 +3,15 @@ import argparse, plistlib, uuid
 from importlib.resources import files
 from pathlib import Path
 
-NAME='Convert video to 1080p'
+NAME='CamPresso — Compress to 1080p'
 
 def build(destination):
     destination=Path(destination).expanduser()
     if destination.suffix!='.workflow':raise ValueError('Choose a .workflow bundle destination.')
     contents=destination/'Contents';resources=contents/'Resources';resources.mkdir(parents=True,exist_ok=True)
-    source=files('video_queue').joinpath('resources/photos_service.applescript').read_text(encoding='utf-8')
-    service=dict(NSMenuItem={'default':NAME},NSMessage='runWorkflowAsService',NSRequiredContext={'NSApplicationIdentifier':'com.apple.Photos'},NSReturnTypes=[],NSSendTypes=[],NSServiceDescription='Compress the selected videos to 1080p, add copies for review in Video Queue, and keep originals until you decide.',NSTimeout='120000')
-    info=dict(CFBundleIdentifier='local.silvio.videoqueue.convert1080service',CFBundleName=NAME,CFBundleVersion='4',NSServices=[service])
+    source=files('campresso').joinpath('resources/photos_service.applescript').read_text(encoding='utf-8')
+    service=dict(NSMenuItem={'default':NAME},NSMessage='runWorkflowAsService',NSRequiredContext={'NSApplicationIdentifier':'com.apple.Photos'},NSReturnTypes=[],NSSendTypes=[],NSServiceDescription='Compress the selected videos to 1080p, add copies for review in CamPresso, and keep originals until you decide.',NSTimeout='120000')
+    info=dict(CFBundleIdentifier='local.silvio.campresso.convert1080service',CFBundleName=NAME,CFBundleVersion='4',NSServices=[service])
     accepts=dict(Container='List',Optional=True,Types=['com.apple.applescript.object'])
     provides=dict(Container='List',Types=['com.apple.applescript.object'])
     action=dict(AMAccepts=accepts,AMActionVersion='1.0.2',AMParameterProperties={'source':{}},AMProvides=provides,AMRequiredResources=[],ActionBundlePath='/System/Library/Automator/Run AppleScript.action',ActionName='Run AppleScript',ActionParameters={'source':source},Application=['Automator'],BundleIdentifier='com.apple.Automator.RunScript',CFBundleVersion='1.0.2',CanShowSelectedItemsWhenRun=False,CanShowWhenRun=True,Category=['AMCategoryUtilities'],InputUUID=str(uuid.uuid4()).upper(),OutputUUID=str(uuid.uuid4()).upper(),UUID=str(uuid.uuid4()).upper(),UnlocalizedApplications=['Automator'],isViewVisible=True,ShowWhenRun=False)

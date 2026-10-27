@@ -20,7 +20,7 @@ class PhotosBrowser:
         self.download_queue=[];self.download_keys=set();self.download_callbacks={};self.play_requests=set();self.download_names={};self.download_count=0;self.download_errors=[]
         self.actual_library='';self.closed=False;self.closing=False;self.debounce=None
         self.workers=set()
-        cache_dir=Path(cache_dir) if cache_dir is not None else Path.home()/'Library'/'Application Support'/'Video Queue'
+        cache_dir=Path(cache_dir) if cache_dir is not None else Path.home()/'Library'/'Application Support'/'CamPresso'
         self.previews=PreviewStore(cache_dir/'Previews')
         self.thumbnails=ThumbnailStore(cache_dir/'Thumbnails',self.previews)
         self.preferences=StateFile(cache_dir/'preferences.json')
@@ -32,7 +32,7 @@ class PhotosBrowser:
         if embedded:
             self.win=ttk.Frame(parent);self.win.pack(fill='both',expand=True)
         else:
-            self.win=tk.Toplevel(parent);self.win.title('Video Queue — Photos Library');self.win.geometry('1120x720');self.win.minsize(900,600)
+            self.win=tk.Toplevel(parent);self.win.title('CamPresso — Photos Library');self.win.geometry('1120x720');self.win.minsize(900,600)
             self.win.protocol('WM_DELETE_WINDOW',self.close)
         frame=ttk.Frame(self.win,padding=8);frame.pack(fill='both',expand=True);self.frame=frame
         heading=ttk.Frame(frame);heading.pack(fill='x',pady=(0,4));self.heading=heading
@@ -46,7 +46,7 @@ class PhotosBrowser:
             try:
                 from osxphotos.utils import get_system_library_path, get_last_library_path
                 remembered=get_system_library_path() or get_last_library_path() or ''
-            except Exception:logging.getLogger('videoqueue').debug('Could not discover a Photos library',exc_info=True)
+            except Exception:logging.getLogger('campresso').debug('Could not discover a Photos library',exc_info=True)
         self.library=tk.StringVar(value=remembered if isinstance(remembered,str) else '')
         self.library_name=tk.StringVar(value=Path(self.library.get()).name if self.library.get() else 'No library selected — open Settings')
         if isinstance(remembered,str) and remembered.lower().endswith('.photoslibrary'):self.actual_library=str(Path(remembered).expanduser().resolve())
@@ -157,7 +157,7 @@ class PhotosBrowser:
         self.saved_preferences['library']=self.library.get().strip()
         try:self.preferences.write(self.saved_preferences)
         except OSError as error:
-            logging.getLogger('videoqueue').warning('Could not remember Photos library: %s',error)
+            logging.getLogger('campresso').warning('Could not remember Photos library: %s',error)
             self.status.set(f'Could not save library preference: {error}')
     def transfer_key(self,media):return (self.actual_library,media.uuid)
     def available_media(self,media):
@@ -198,14 +198,14 @@ class PhotosBrowser:
         self.filter_toggle.configure(text='Filters'+(f' ({count})' if count else '')+(' ▾' if self.advanced_open else ' ▸'))
 
     def permissions_help(self):
-        app=Path.home()/'Applications'/'Video Queue.app'
+        app=Path.home()/'Applications'/'CamPresso.app'
         messagebox.showinfo('Photos library access',
             f'The app is installed here:\n{app}\n\n'
             '1. Open System Settings → Privacy & Security → Full Disk Access.\n'
             '2. Click +. In the picker, press Command-Shift-G.\n'
             '3. Type ~/Applications and press Return.\n'
-            '4. Select Video Queue.app and enable its switch.\n'
-            '5. Quit and reopen Video Queue.\n\n'
+            '4. Select CamPresso.app and enable its switch.\n'
+            '5. Quit and reopen CamPresso.\n\n'
             'A “database not found” error can also mean the wrong library folder was selected. '
             'Choose the .photoslibrary bundle, or leave Library blank.',parent=self.win)
         if app.exists():subprocess.Popen(['open','-R',str(app)])
@@ -374,10 +374,10 @@ class PhotosBrowser:
                 if error is None and ready:ready(row,path)
                 elif error is not None and failed:failed(key,error)
             except Exception as callback_error:
-                logging.getLogger('videoqueue').exception('Download completion callback failed: %s',key)
+                logging.getLogger('campresso').exception('Download completion callback failed: %s',key)
                 if error is None and failed:
                     try:failed(key,callback_error)
-                    except Exception:logging.getLogger('videoqueue').exception('Download failure callback failed: %s',key)
+                    except Exception:logging.getLogger('campresso').exception('Download failure callback failed: %s',key)
     def start_next_download(self):
         if self.closing or self.cancel.is_set():
             for key,_,_,_ in self.download_queue:
@@ -393,7 +393,7 @@ class PhotosBrowser:
                 self.events.put(('download_saved',key,row,path))
             except ScanCancelled:self.events.put(('download_failed',key,row,None,True))
             except Exception as error:
-                logging.getLogger('videoqueue').exception('Video download failed: %s (%s)',row.name,row.uuid)
+                logging.getLogger('campresso').exception('Video download failed: %s (%s)',row.name,row.uuid)
                 self.events.put(('download_failed',key,row,str(error),False))
         self.start_worker(worker,'original-download')
     def enqueue_selected(self):
@@ -423,7 +423,7 @@ class PhotosBrowser:
                     path=fetch_video(r,dest,library,self.cancel,lambda text:self.events.put(('progress',f'{n}/{len(selected)} · {r.name}: {text}')));copied.append(path)
                 except ScanCancelled:break
                 except Exception as e:
-                    logging.getLogger('videoqueue').exception('Photos download/copy failed: %s (%s)',r.name,r.uuid)
+                    logging.getLogger('campresso').exception('Photos download/copy failed: %s (%s)',r.name,r.uuid)
                     errors.append(f'{r.name}: {e}')
             self.events.put(('copied',copied,errors,self.cancel.is_set()))
         self.start_worker(worker,'original-copy')
@@ -500,7 +500,7 @@ class PhotosBrowser:
                     self.refresh_downloads()
                     if not self.closing and not (e[0]=='scan_error' and e[2]):messagebox.showerror('Photos Library',e[1],parent=self.win)
         except queue.Empty:pass
-        except Exception:logging.getLogger('videoqueue').exception('Could not process a Photos browser event')
+        except Exception:logging.getLogger('campresso').exception('Could not process a Photos browser event')
         finally:
             if not self.closed:self.poll_after=self.win.after(100,self.poll)
     def close(self):

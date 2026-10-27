@@ -6,19 +6,21 @@
 
 Requirements: **macOS 26+**, a Mac supporting hardware HEVC encoding, **Xcode 26+ / Swift 6.2+**, and [Homebrew](https://brew.sh/). The installer builds the native app locally, installs Python 3.13, FFmpeg/ffprobe and ExifTool, and creates the Photos Service.
 
-Quit Video Queue, then double-click `Install.command` or run `bash Install.command` in the repository. The app is installed at `~/Applications/Video Queue.app`. Updates preserve existing application data, preferences, identifiers and journals. Because local builds use an ad hoc signature, macOS may ask for permissions again after an update. Distribution signing/notarization is not provided by this installer.
+Quit CamPresso and the previous app, then double-click `Install.command` or run `bash Install.command` in the repository. The app is installed at `~/Applications/CamPresso.app`. The first CamPresso installation starts fresh: it does not import the previous app’s library selection, settings, history or approvals. Subsequent CamPresso updates preserve CamPresso data and preferences. Because local builds use an ad hoc signature, macOS may ask for permissions again after an update. Distribution signing/notarization is not provided by this installer.
 
 Open the app through Finder or Spotlight. The old Tk interface is no longer the application entry point.
+
+The new identity can require Photos, Full Disk Access and Automation permissions again. On first launch the library is blank until you choose it.
 
 ## First launch and Settings
 
 1. Click **Allow Photos Access** and allow full access. If denied, use **System Settings → Privacy & Security → Photos**.
-2. Open **Video Queue → Settings…** (`⌘,`). Select your `.photoslibrary` bundle.
+2. Open **CamPresso → Settings…** (`⌘,`). Select your `.photoslibrary` bundle.
 3. Check **Photos → Settings → General**: the selected library must be the **System Photo Library** to compress or make Photos changes. Other libraries can be browsed, but native playback accesses only the System library.
-4. Check the Shared Library settings in Photos. Confirm in Video Queue that family **Shared Photo Library is not configured** for this library. Personal iCloud Photos is supported. Shared or uncertain cases remain browse/play-only.
+4. Check the Shared Library settings in Photos. Confirm in CamPresso that family **Shared Photo Library is not configured** for this library. Personal iCloud Photos is supported. Shared or uncertain cases remain browse/play-only.
 5. Read and accept the notice explaining that compressed copies are added before review and which metadata can transfer. Save.
 
-The saved library is scanned automatically on launch. If catalog reading fails, check the path and grant Video Queue Full Disk Access in **Privacy & Security → Full Disk Access**, then reopen it. Refresh (`⌘R`) reloads the catalog; the app does not edit Photos databases directly.
+The saved library is scanned automatically on launch. If catalog reading fails, check the path and grant CamPresso Full Disk Access in **Privacy & Security → Full Disk Access**, then reopen it. Refresh (`⌘R`) reloads the catalog; the app does not edit Photos databases directly.
 
 ## Browse and select
 
@@ -99,21 +101,31 @@ Dates, location, favorite, hidden status, original filename stem and writable re
 
 ## Photos Service
 
-Installation adds **Photos → Services → Convert video to 1080p**. Select one or more videos in Photos' grid and run it. It queues the same native workflow with a 1080p override and stops at review with originals retained. It never approves Keep Compressed.
+Installation adds **Photos → Services → CamPresso — Compress to 1080p**. Select one or more videos in Photos' grid and run it. It queues the same native workflow with a 1080p override and stops at review with originals retained. It never approves Keep Compressed.
 
-If missing, check **System Settings → Keyboard → Keyboard Shortcuts → Services**, restart Photos, or rerun the installer with Video Queue closed. A selection must belong to the loaded personal System Photo Library. Complete Video Queue setup first. Photos' Services menu is the integration point; an item-specific contextual extension is not installed.
+If missing, check **System Settings → Keyboard → Keyboard Shortcuts → Services**, restart Photos, or rerun the installer with CamPresso closed. A selection must belong to the loaded personal System Photo Library. Complete CamPresso setup first. Photos' Services menu is the integration point; an item-specific contextual extension is not installed.
 
 ## Close, storage and recovery
 
 Closing during processing asks **Stop and Close** or **Keep Working**. Confirming stops downloads/encoding, preserves finished Photos reviews and waits for an active Photos transaction. An operating-system Photos confirmation may need a response before it can finish.
 
-Safe app-managed media under `~/Library/Application Support/Video Queue/NativeWork/` is released after verified import and on clean close. Comparison media is requested again from Photos as needed. Photos itself manages its iCloud downloads and cache; Video Queue cannot promise to evict those bytes.
+Safe app-managed media under `~/Library/Application Support/CamPresso/NativeWork/` is released after verified import and on clean close. Comparison media is requested again from Photos as needed. Photos itself manages its iCloud downloads and cache; CamPresso cannot promise to evict those bytes.
 
 Unresolved operations retain recovery files. **Details** shows their size/reason, both identifiers, generation and operation history; **Open Logs and Recovery** opens the data directory. Preferences, identifiers, workflow records, migration backups and transaction journals remain. External inputs and files inside `.photoslibrary` bundles are never removed by cache cleanup.
 
 For **Needs attention**, use **Inspect Photos status**. Inspection reads exact IDs and journals; it never retries an import or deletion. If both versions are verified, another review becomes available. If an import ID is unknown or a version is missing, the state remains unresolved: inspect Photos and the journal manually. Do not repeatedly enqueue the same source or delete recovery files to clear the warning.
 
-On upgrade, version-3 state and preferences are backed up under `Migrations/` before migration. Completed pairs stay grouped. Older local-only results require explicit import; pending writes require reconciliation. The old interface refuses to open migrated state. Legacy external-file records are preserved as history but are not part of the native Photos gallery.
+### Previous work / Recovery
+
+The rebrand installer preserves unfinished earlier reviews and uncertain Photos operations under **Settings → Previous work / Recovery**, separate from the new history. Their files and journals stay at the original locations. Choose the recorded System Photo Library and click **Inspect and restore review…**. This reads exact identifiers and receipts without repeating an import or deletion. A verified pair returns to Review only after inspection; an already-confirmed decision keeps its history cleared. Unresolved cases remain protected. Uncertain previous Photos writes pause further imports/decisions until inspection; a pending review alone does not block other videos. The installer retires only verified previous app/Service bundles after the new installation succeeds.
+
+### Clear conversion history
+
+Use **Settings → Storage → Clear conversion history…**. The confirmation shows the number of finished records, reclaimable temporary bytes and protected items. Completed, cancelled, skipped and ordinary failed work is removable. Active/paused work, pending reviews, uncertain writes, recovery journals and necessary asset associations remain. Cleanup does not reset settings.
+
+Processing must stop before cleanup. Confirmation is revalidated; changed files, symbolic links, hard-linked files and external inputs are never treated as disposable. **Retained files** lists remaining paths, sizes and reasons. Run cleanup again to retry failed removals; inspect changed/external files manually. A cleared history stays cleared after reopening. Previously generated copies remain recognized in Library (Already compressed / Original kept), outside Completed history.
+
+No history-cleanup or installation step deletes anything from Apple Photos. Old recovery locations remain on disk while needed. Do not manually delete them to remove a warning.
 
 ## Verification limits
 

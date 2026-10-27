@@ -36,3 +36,17 @@ Use disposable videos and a dedicated test **System Photo Library**, with a back
 | Photos Service | Grid selection IDs enqueue 1080p workflow; no replacement approval; failed selection is visible/retryable. |
 
 Inspect Recently Deleted and both supported metadata and unsupported metadata limitations. Successful local import/removal is not evidence that iCloud finished synchronizing or disk space was immediately reclaimed.
+
+
+## Rebrand and cleanup acceptance scenarios
+
+No test or live-library execution is implied by this checklist.
+
+- Fresh installation has a blank library, default settings, empty Processing/Completed views and the branded icon/About/tagline; reopening after setup remembers the newly chosen library.
+- Previous completed decisions lose detailed history but retain minimal associations; the pending prior review remains in Recovery and requires explicit read-only inspection before restoration.
+- Cleanup preview/confirmation counts match, cancellation changes nothing, and repeated cleanup remains safe with no duplicate imports.
+- Cleanup never removes Photos assets, external inputs, changed files, hard links, symlinks, pending reviews, paused/active work or uncertain transaction material.
+- Interrupt between ledger publication, workflow removal and file unlinking; reopening preserves recognition/recovery and offers retry for remaining safe files.
+- Run an old app while installing/cleaning: the storage lock blocks the operation. Conflicting unrecognized CamPresso data or app identity is retained with an actionable error.
+- Inspect SVG/transparent PNG/16–1024-pixel ICNS representations; the mark contains exactly three motion lines and the bundle references its icon.
+- Verify new repo URL, origin, main revision and all internal documentation links after publishing.

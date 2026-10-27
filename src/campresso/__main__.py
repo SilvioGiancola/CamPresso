@@ -1,4 +1,4 @@
-"""Launch Video Queue with ``python -m video_queue``."""
+"""Launch CamPresso with ``python -m campresso``."""
 
 from .app import main
 

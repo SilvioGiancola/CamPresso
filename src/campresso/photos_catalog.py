@@ -155,7 +155,7 @@ def copy_video(media, destination, library, cancel=None, report=None):
     name=Path(filename)
     # The copied file has the actual source container, even if a display filename was renamed.
     suffix=source.suffix or name.suffix
-    fd,tmp=tempfile.mkstemp(prefix='.videoqueue-copy-',suffix=suffix,dir=dest)
+    fd,tmp=tempfile.mkstemp(prefix='.campresso-copy-',suffix=suffix,dir=dest)
     tmp=Path(tmp)
     try:
         copied=0;last_percent=-1

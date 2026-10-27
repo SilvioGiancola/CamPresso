@@ -17,7 +17,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def main():
     project = tomllib.loads((ROOT / "pyproject.toml").read_text())
-    package = ROOT / "src" / "video_queue"
+    package = ROOT / "src" / "campresso"
     internal = {path.stem for path in package.glob("*.py")}
     sources = sorted(
         path
@@ -29,12 +29,12 @@ def main():
         for node in ast.walk(tree):
             if isinstance(node, ast.ImportFrom):
                 if not node.level and node.module in internal:
-                    raise ValueError(f"Use the video_queue package import in {path}:{node.lineno}")
+                    raise ValueError(f"Use the campresso package import in {path}:{node.lineno}")
                 if node.level == 1 and node.module and path.is_relative_to(package):
                     if node.module.split(".")[0] not in internal:
                         raise ValueError(f"Missing relative module in {path}:{node.lineno}")
 
-    for pattern in project["tool"]["setuptools"]["package-data"]["video_queue"]:
+    for pattern in project["tool"]["setuptools"]["package-data"]["campresso"]:
         if not list(package.glob(pattern)):
             raise ValueError(f"Package data does not match a file: {pattern}")
     for target in project["project"]["scripts"].values():

@@ -3,7 +3,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
 import tempfile, threading, unittest
-from video_queue.photos_catalog import Media, ScanCancelled, scan_library, media_from_photo, view, copy_video, ensure_outside_library
+from campresso.photos_catalog import Media, ScanCancelled, scan_library, media_from_photo, view, copy_video, ensure_outside_library
 
 class CatalogTests(unittest.TestCase):
     def row(self, **changes):
@@ -75,18 +75,18 @@ class CatalogTests(unittest.TestCase):
 
 class LibraryPathTests(unittest.TestCase):
     def test_pictures_resolves_single_library(self):
-        from video_queue.photos_catalog import resolve_library
+        from campresso.photos_catalog import resolve_library
         with tempfile.TemporaryDirectory() as d:
             pictures=Path(d);lib=pictures/'Photos Library.photoslibrary';lib.mkdir()
             self.assertEqual(resolve_library(pictures),str(lib))
             self.assertEqual(resolve_library(lib),str(lib))
     def test_multiple_library_names_are_actionable(self):
-        from video_queue.photos_catalog import resolve_library
+        from campresso.photos_catalog import resolve_library
         with tempfile.TemporaryDirectory() as d:
             for name in ('Personal.photoslibrary','Work.photoslibrary'):(Path(d)/name).mkdir()
             with self.assertRaisesRegex(ValueError,'Several Photos libraries'):resolve_library(d)
     def test_not_permission_error_for_wrong_folder(self):
-        from video_queue.photos_catalog import resolve_library
+        from campresso.photos_catalog import resolve_library
         with tempfile.TemporaryDirectory() as d:
             with self.assertRaisesRegex(ValueError,'No Photos libraries'):resolve_library(d)
 

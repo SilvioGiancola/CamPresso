@@ -1,4 +1,8 @@
-# Video Queue
+# CamPresso
+
+<img src="assets/brand/campresso-icon.png" width="112" alt="CamPresso press and video icon">
+
+**Action, packed lighter**
 
 A native **macOS 26+** app for reducing the size of videos in your personal Apple Photos library.
 
@@ -8,7 +12,7 @@ Browse a compact thumbnail gallery, compress local or iCloud videos, then compar
 
 ## Get started
 
-1. Install [Homebrew](https://brew.sh/) and **Xcode 26+** with Swift 6.2+. Quit any running Video Queue instance.
+1. Install [Homebrew](https://brew.sh/) and **Xcode 26+** with Swift 6.2+. Quit CamPresso and any running instance of the previous app.
 2. Double-click [Install.command](Install.command), or run `bash Install.command` from the checkout.
 3. Allow Photos access. In **Settings…**, select your **System Photo Library**, confirm it is a personal library without family Shared Photo Library configured, and read the import/review notice. The saved library opens automatically on future launches.
 4. Select videos and click **Compress**. Cloud videos download automatically; one download can run while another video converts.
@@ -27,19 +31,27 @@ Browse a compact thumbnail gallery, compress local or iCloud videos, then compar
 | [Verification checklist](docs/VERIFICATION.md) | Acceptance scenarios and current verification limits. |
 | [Changelog](CHANGELOG.md) | Changes and release history. |
 
+## Fresh start and history cleanup
+
+The first CamPresso installation uses a new app identity and data folder, with blank library settings, default conversion settings and empty history. The installer keeps prior asset associations separately and preserves unfinished reviews in **Settings → Previous work / Recovery**. No Photos videos are removed by installation.
+
+Use **Settings → Storage → Clear conversion history…** to preview finished records and safe temporary files before clearing them. Pending reviews, recovery journals, changed/external files and Photos videos are protected. Later CamPresso updates preserve its settings and current work.
+
+See the [branding guide](docs/BRANDING.md) for editable logos and exports.
+
 ## Before you start
 
 - Supported dates, location, favorites, hidden status, filenames and writable regular albums carry over. Faces, edit history and some Photos metadata do not.
 - Supported HLG/HDR10 stays HDR. Unsupported media is skipped rather than silently downgraded. Dolby Vision dynamic metadata and editable Cinematic effects are not retained.
 - Savings mean **library size reduction**, not immediately reclaimed disk space. Recently Deleted normally retains removed items for 30 days; permanent deletion is manual. See [Apple's deletion guide](https://support.apple.com/en-lamr/104967).
 - Shared and uncertain cases are browse/play-only. The complete workflow requires the personal System Photo Library.
-- Local temporary files are released when safe. Photos manages its own downloads/cache; Video Queue never deletes files inside the Photos library.
+- Local temporary files are released when safe. Photos manages its own downloads/cache; CamPresso never deletes files inside the Photos library.
 
 ## Repository
 
 ```text
 macos/             SwiftUI app, AVKit comparison, PhotoKit transactions, encoder
-src/video_queue/   Headless Python scheduler, catalog, persistence, legacy helpers
+src/campresso/   Headless Python scheduler, catalog, persistence, legacy helpers
 scripts/           Native build, installer, Photos Service and static checks
 docs/              User, developer and verification guides
 tests/             Existing Python tests, including legacy GUI checks

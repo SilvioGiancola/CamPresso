@@ -8,7 +8,7 @@ class StorageLock:
         self.handle=(Path(data)/'.app.lock').open('a+')
         try:fcntl.flock(self.handle.fileno(),fcntl.LOCK_EX|fcntl.LOCK_NB)
         except BlockingIOError:
-            self.handle.close();raise RuntimeError('Video Queue is already open. Use its existing window, or close it before reopening.')
+            self.handle.close();raise RuntimeError('CamPresso is already open. Use its existing window, or close it before reopening.')
     def close(self):
         fcntl.flock(self.handle.fileno(),fcntl.LOCK_UN);self.handle.close()
 
@@ -20,7 +20,7 @@ def clean_storage(data,jobs,delete_unsent=False):
     for job in jobs:
         protected.update(canonical(path) for path in job.get('retained_outputs',[]) if path)
         media=job.get('media');backup=canonical(job.get('backup'))
-        if media and backup and backup.parent.parent.name=='Original backups' and backup.parent.parent.parent.name in ('Video Queue Work','Photos work','Temporary work'):
+        if media and backup and backup.parent.parent.name=='Original backups' and backup.parent.parent.parent.name in ('Video Queue Work','CamPresso Work','Photos work','Temporary work'):
             roots.add(backup.parent.parent)
         if not media and job.get('path'):protected.add(canonical(job['path']))
         uncertain=not job.get('retry_safe',True)

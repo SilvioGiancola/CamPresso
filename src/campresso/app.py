@@ -7,15 +7,15 @@ import sys
 
 
 def main(argv=None):
-    parser = argparse.ArgumentParser(description='Open the native macOS Video Queue app.')
+    parser = argparse.ArgumentParser(description='Open the native macOS CamPresso app.')
     parser.add_argument('--data-dir', type=Path)
     parser.add_argument('--backend-python', type=Path)
     parser.add_argument('--native-app', type=Path,
-                        default=Path.home()/'Applications'/'Video Queue.app')
+                        default=Path.home()/'Applications'/'CamPresso.app')
     options = parser.parse_args(argv)
     executable = options.native_app.expanduser().resolve()
     if executable.suffix == '.app':
-        executable = executable/'Contents'/'MacOS'/'VideoQueue'
+        executable = executable/'Contents'/'MacOS'/'CamPresso'
     try:
         magic = executable.open('rb').read(4)
     except OSError:

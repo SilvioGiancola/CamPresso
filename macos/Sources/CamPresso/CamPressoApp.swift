@@ -32,17 +32,20 @@ struct MainWindowHook: NSViewRepresentable {
 }
 
 @main
-struct VideoQueueApp: App {
+struct CamPressoApp: App {
     @NSApplicationDelegateAdaptor(ApplicationDelegate.self) private var delegate
     @StateObject private var model = AppModel()
     @Environment(\.openSettings) private var openSettings
     var body: some Scene {
-        Window("Video Queue", id: "main") {
-            LibraryView().environmentObject(model).background(MainWindowHook(model: model))
+        Window("CamPresso", id: "main") {
+            LibraryView().environmentObject(model).tint(Brand.accent).background(MainWindowHook(model: model))
                 .onAppear { delegate.model = model; model.start() }
         }
         .defaultSize(width: 1160, height: 790)
         .commands {
+            CommandGroup(replacing: .appInfo) {
+                Button("About CamPresso") { Brand.about() }
+            }
             CommandGroup(replacing: .newItem) {}
             CommandGroup(after: .toolbar) {
                 Button("Refresh Library") { Task { await model.refresh() } }.keyboardShortcut("r")
@@ -50,10 +53,10 @@ struct VideoQueueApp: App {
                 Button("Show Summary") { NotificationCenter.default.post(name: .init("ToggleSummary"), object: nil) }
             }
             CommandGroup(replacing: .help) {
-                Button("Video Queue User Guide") { NSWorkspace.shared.open(URL(string: "https://github.com/SilvioGiancola/MacVideoLibraryConverter/blob/main/docs/USER_GUIDE.md")!) }
+                Button("CamPresso User Guide") { NSWorkspace.shared.open(URL(string: "https://github.com/SilvioGiancola/CamPresso/blob/main/docs/USER_GUIDE.md")!) }
                 Button("Open Logs and Recovery") { NSWorkspace.shared.open(model.data) }
             }
         }
-        Settings { SettingsView().environmentObject(model) }
+        Settings { SettingsView().environmentObject(model).tint(Brand.accent) }
     }
 }

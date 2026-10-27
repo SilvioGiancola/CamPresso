@@ -84,7 +84,7 @@ final class NativeMedia: @unchecked Sendable {
         let resolved = url.resolvingSymlinksInPath()
         guard resolved.path.hasPrefix(root.path + "/"), url.path == resolved.path,
               !url.pathComponents.contains(where: { $0.lowercased().hasSuffix(".photoslibrary") }) else {
-            throw WorkflowError(message: "Working files must remain inside Video Queue’s temporary folder.")
+            throw WorkflowError(message: "Working files must remain inside CamPresso’s temporary folder.")
         }
         return url
     }
@@ -96,6 +96,7 @@ final class NativeMedia: @unchecked Sendable {
         }
     }
     func perform(_ method: String, _ params: JSONObject, progress: @escaping (String, Double?) -> Void) async throws -> JSONObject {
+        if method == "storage.status" { return ["busy": hasWork] }
         if method == "cancel" {
             if !string(params["job_id"]).isEmpty { flag(string(params["job_id"])).cancel() }
             else { cancel() }
@@ -362,7 +363,30 @@ final class NativeMedia: @unchecked Sendable {
         var resultID = string(params["result_id"])
         var receipt: JSONObject = [:]
         let operation = object(params["operation"])
-        if !string(operation["id"]).isEmpty {
+        if !string(params["previous_work_id"]).isEmpty {
+            let archive = try loadJournal(data.appendingPathComponent("PreviousWork.json"))
+            let entries = archive["entries"] as? [JSONObject] ?? []
+            guard let entry = entries.first(where: { string($0["id"]) == string(params["previous_work_id"]) }),
+                  string(object(entry["job"])["id"]) == string(params["job_id"]),
+                  string(object(entry["job"])["library"]) == string(params["library"]) else {
+                throw WorkflowError(message: "Previous-work record identity does not match.")
+            }
+            if !string(entry["journal"]).isEmpty {
+                receipt = try loadJournal(URL(fileURLWithPath: string(entry["journal"])))
+                let nativeReceipt = !string(receipt["original_id"]).isEmpty
+                guard key(string(receipt[nativeReceipt ? "original_id" : "uuid"])) == key(string(params["original_id"])),
+                      string(receipt["library"]) == string(params["library"]) else {
+                    throw WorkflowError(message: "The previous journal belongs to another video or library.")
+                }
+                if nativeReceipt {
+                    guard string(receipt["job_id"]) == string(params["job_id"]),
+                          string(receipt["generation"]) == string(params["generation"]) else {
+                        throw WorkflowError(message: "Previous journal generation does not match.")
+                    }
+                }
+                if resultID.isEmpty { resultID = string(receipt[nativeReceipt ? "result_id" : "new_uuid"]) }
+            }
+        } else if !string(operation["id"]).isEmpty {
             var request = params; request["operation_id"] = operation["id"]
             receipt = try loadJournal(journalURL(request))
             guard string(receipt["job_id"]) == string(params["job_id"]), string(receipt["generation"]) == string(params["generation"]),

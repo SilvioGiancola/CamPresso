@@ -5,7 +5,7 @@ SCRIPT='''on run arguments
     set targetIdentifier to item 1 of arguments
     with timeout of 25 seconds
         tell application id "com.apple.Photos"
-            if not (exists media item id targetIdentifier) then error "This item was not found in the open Photos library. Open the library used in Video Queue and try again. The item may have been removed from Photos."
+            if not (exists media item id targetIdentifier) then error "This item was not found in the open Photos library. Open the library used in CamPresso and try again. The item may have been removed from Photos."
             activate
             spotlight (media item id targetIdentifier)
         end tell

@@ -2,7 +2,7 @@
 import unittest
 from types import SimpleNamespace, ModuleType
 from unittest.mock import patch
-from video_queue.photos_actions import Actions
+from campresso.photos_actions import Actions
 
 class BridgeTests(unittest.TestCase):
     def setUp(self):

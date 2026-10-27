@@ -18,7 +18,7 @@ def build(destination, disable_swift_sandbox=False):
     if destination.suffix != '.app' or destination.exists():
         raise RuntimeError('Choose a new .app destination; existing bundles are never overwritten by the build command.')
     version = tomllib.loads((ROOT/'pyproject.toml').read_text())['project']['version']
-    with tempfile.TemporaryDirectory(prefix='videoqueue-build-') as temporary:
+    with tempfile.TemporaryDirectory(prefix='campresso-build-') as temporary:
         temporary = Path(temporary)
         # All compiler/cache output stays outside the source checkout.
         environment = dict(os.environ, CLANG_MODULE_CACHE_PATH=str(temporary/'modules'),
@@ -31,13 +31,16 @@ def build(destination, disable_swift_sandbox=False):
             command.append('--disable-sandbox')
         subprocess.run(command, env=environment, check=True)
         binary_path = subprocess.check_output(command + ['--show-bin-path'], env=environment, text=True).strip()
-        contents = temporary/'Video Queue.app'/'Contents'
+        contents = temporary/'CamPresso.app'/'Contents'
         (contents/'MacOS').mkdir(parents=True)
         (contents/'Resources').mkdir()
-        shutil.copy2(Path(binary_path)/'VideoQueue', contents/'MacOS'/'VideoQueue')
+        shutil.copy2(Path(binary_path)/'CamPresso', contents/'MacOS'/'CamPresso')
+        for filename in ('CamPresso.icns', 'campresso-mark.png'):
+            shutil.copy2(ROOT/'assets'/'brand'/filename, contents/'Resources'/filename)
         info = {
-            'CFBundleExecutable': 'VideoQueue', 'CFBundleIdentifier': 'local.silvio.videoqueue',
-            'CFBundleName': 'Video Queue', 'CFBundlePackageType': 'APPL',
+            'CFBundleExecutable': 'CamPresso', 'CFBundleIdentifier': 'local.silvio.campresso',
+            'CFBundleName': 'CamPresso', 'CFBundlePackageType': 'APPL',
+            'CFBundleDisplayName': 'CamPresso', 'CFBundleIconFile': 'CamPresso.icns',
             'CFBundleShortVersionString': version, 'CFBundleVersion': version,
             'LSMinimumSystemVersion': '26.0', 'NSHighResolutionCapable': True,
             'NSPhotoLibraryUsageDescription': 'Download videos and add smaller copies for comparison. Remove only the version you approve with Keep Compressed or Revert.',

@@ -13,14 +13,14 @@ on run {input, parameters}
                 copy (selectedIdentifier as text) to end of identifiers
             end repeat
         end tell
-        set appData to (POSIX path of (path to home folder)) & "Library/Application Support/Video Queue/"
-        set commandText to (quoted form of (appData & "venv/bin/python")) & " -m video_queue.photos_service"
+        set appData to (POSIX path of (path to home folder)) & "Library/Application Support/CamPresso/"
+        set commandText to (quoted form of (appData & "venv/bin/python")) & " -m campresso.photos_service"
         repeat with identifierText in identifiers
             set commandText to commandText & " " & (quoted form of ((contents of identifierText) as text))
         end repeat
         do shell script commandText
     on error errorText number errorNumber
-        if errorNumber is not -128 then display dialog errorText with title "Convert video to 1080p" buttons {"OK"} default button "OK" with icon caution
+        if errorNumber is not -128 then display dialog errorText with title "CamPresso — Compress to 1080p" buttons {"OK"} default button "OK" with icon caution
     end try
     return input
 end run

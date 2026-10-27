@@ -22,6 +22,7 @@ import uuid
 from .engine import Cancelled, Skipped
 from .native_store import NativeStore, asset_key, digest, generated_ids, read_strict
 from .native_validation import verify_output
+from .history import History, delete_preview_files, protected
 from .photos_catalog import scan_library, resolve_library
 from .state_store import StateFile
 from .storage_cleanup import StorageLock
@@ -109,6 +110,9 @@ class WorkflowController:
         self.transport = transport
         self.lock = threading.RLock()
         self.store = NativeStore(self.data)
+        self.history = History(self.data)
+        self.cleaning = False
+        self.cleanup_revision = None
         self.preferences_file = StateFile(self.data / 'preferences.json')
         self.preferences = read_strict(self.preferences_file.path)
         old = self.preferences.get('compression', {})
@@ -118,9 +122,7 @@ class WorkflowController:
         self.preferences.setdefault('codec', old.get('codec', 'HEVC'))
         if old.get('size') not in (None, '1080'):
             self.preferences.setdefault('resolution_override', int(old['size']))
-        if not self.preferences.get('library'):
-            from osxphotos.utils import get_system_library_path
-            self.preferences['library'] = get_system_library_path() or ''
+        self.preferences.setdefault('library', '')
         self.library = str(Path(self.preferences['library']).expanduser().resolve()) if self.preferences.get('library') else ''
         self.rows = []
         self.catalog_error = None
@@ -129,7 +131,7 @@ class WorkflowController:
         self.stopping = False
         self.finished = threading.Event()
         self.decisions = []
-        self.executor = ThreadPoolExecutor(max_workers=5, thread_name_prefix='videoqueue')
+        self.executor = ThreadPoolExecutor(max_workers=5, thread_name_prefix='campresso')
         self.lanes = {}
         self.cancellations = {}
         self.revision = 0
@@ -159,6 +161,8 @@ class WorkflowController:
         return result
 
     def assert_writable(self):
+        if self.cleaning:
+            raise RuntimeError('Wait for history cleanup to finish.')
         if self.write_fault:
             raise RuntimeError(self.write_fault)
         require_system_library(self.library)
@@ -215,7 +219,24 @@ class WorkflowController:
                     fallback.update({key: replacement.get(key) for key in
                                      ('favorite', 'local', 'date', 'duration', 'thumbnail', 'width', 'height')})
             media.setdefault(job['source_uuid'], fallback)
-        return [self.row(row, self.store.find(identifier, self.library)) for identifier, row in media.items()]
+        rows = [self.row(row, self.store.find(identifier, self.library)) for identifier, row in media.items()]
+        active_sources = {job['source_uuid'] for job in jobs}
+        for link in self.history.links:
+            if link['library'] != self.library or link['source_id'] in active_sources:
+                continue
+            ids = set(link.get('generated_ids', [])) | {link['source_id']}
+            present = next((row for row in rows if row['id'] in ids), None)
+            survivor = link.get('result_id') if link.get('decision') == 'keep' else link['source_id']
+            candidate = catalog.get(asset_key(survivor)) or (catalog.get(link['source_id']) if link.get('pending') else None)
+            rows = [row for row in rows if row['id'] not in ids]
+            if candidate:
+                present = self.row(candidate)
+            if present:
+                present.update(state='Previous work' if link.get('pending') else
+                               'Already compressed' if link.get('decision') == 'keep' else 'Original kept',
+                               excluded=True, detail='History cleared; asset association retained for safety.')
+                rows.append(present)
+        return rows
 
     def snapshot(self):
         with self.lock:
@@ -224,7 +245,9 @@ class WorkflowController:
                         catalog_error=self.catalog_error, fatal_error=self.write_fault,
                         active=sum(job['state'] in ACTIVE for job in self.store.jobs.values()),
                         pending_reviews=sum(job['state'] == 'Ready to review' for job in self.store.jobs.values()),
-                        legacy_count=len(self.store.legacy), run_ids=sorted(self.run_ids))
+                        legacy_count=len(self.store.legacy), run_ids=sorted(self.run_ids),
+                        previous_work=self.history.summaries(), cleaning=self.cleaning,
+                        retained_files=self.history.retained_summaries())
 
     def publish(self, job=None):
         self.revision += 1
@@ -276,7 +299,7 @@ class WorkflowController:
                     self.preferences_file.write(self.preferences)
             except Exception as error:
                 with self.lock:
-                    self.catalog_error = str(error) + '\nCheck the library path and Full Disk Access for Video Queue.'
+                    self.catalog_error = str(error) + '\nCheck the library path and Full Disk Access for CamPresso.'
                 logging.exception('Catalog reading failed')
             finally:
                 with self.lock:
@@ -296,6 +319,8 @@ class WorkflowController:
             self.paused = False
             for row in self.all_rows():
                 if row['id'] not in wanted:
+                    continue
+                if row.get('excluded'):
                     continue
                 if row.get('shared_library') or row.get('shared_album'):
                     continue
@@ -357,6 +382,8 @@ class WorkflowController:
 
     def import_result(self, job):
         self.assert_writable()
+        if self.history.has_uncertain_previous():
+            raise RuntimeError('Inspect uncertain previous Photos operations before importing more copies.')
         if job['library'] != self.library:
             raise RuntimeError('Open the recorded library before importing this video.')
         if not file_matches(job.get('output'), job.get('output_fingerprint')) or digest(job['output']) != job.get('output_sha256'):
@@ -381,6 +408,8 @@ class WorkflowController:
 
     def decide(self, job, decision, approval):
         self.assert_writable()
+        if self.history.has_uncertain_previous():
+            raise RuntimeError('Inspect uncertain previous Photos operations before applying decisions.')
         if job['library'] != self.library or job['media'].get('shared_library') or job['media'].get('shared_album'):
             raise RuntimeError('Only personal videos from the selected System Photo Library can be changed.')
         if approval != job.get('approval') or not approval or approval['generation'] != job['generation']:
@@ -609,13 +638,13 @@ class WorkflowController:
                                     logging.exception('Could not persist failure')
                     if self.stopping and not self.lanes:
                         break
-                    if not self.stopping and not self.write_fault:
+                    if not self.stopping and not self.write_fault and not self.cleaning:
                         jobs = list(self.store.jobs.values())
                         if 'photos' not in self.lanes:
                             if self.decisions:
                                 identifier, decision, approval = self.decisions.pop(0)
                                 self.lanes['photos'] = (identifier, self.executor.submit(self.decide, self.store.jobs[identifier], decision, approval))
-                            elif not any(job['state'] == 'Needs attention' for job in jobs):
+                            elif not any(job['state'] == 'Needs attention' for job in jobs) and not self.history.has_uncertain_previous():
                                 job = next((job for job in jobs if job['state'] == 'Awaiting save'), None)
                                 if job:
                                     job['state'] = 'Saving to Photos'
@@ -675,17 +704,144 @@ class WorkflowController:
         # Native cancellation only affects reads/encoding, never Photos writes.
         self.transport.send(dict(type='native.request', id='cancel-' + uuid.uuid4().hex, method='cancel', params={}))
 
+    def require_idle_cleanup(self):
+        if self.stopping or self.cleaning or self.scanning or self.lanes or self.decisions or any(
+                job['state'] in ACTIVE for job in self.store.jobs.values()):
+            raise RuntimeError('Stop processing and wait for current work before clearing history.')
+        if self.transport.native('storage.status', {}).get('busy'):
+            raise RuntimeError('Wait for the current native operation before clearing history.')
+
+    def cleanup_history(self, token):
+        with self.lock, self.history.lock_previous():
+            self.require_idle_cleanup()
+            preview = self.history.preview
+            if not preview or token != preview['token'] or self.cleanup_revision != self.revision:
+                raise RuntimeError('History changed. Preview cleanup again before confirming.')
+            for root, plan in preview['previous'].items():
+                if plan['workflow_fingerprint'] and not file_matches(Path(root)/'workflow.json', plan['workflow_fingerprint']):
+                    raise RuntimeError('Previous work changed. Preview cleanup again before confirming.')
+            self.cleaning = True
+            try:
+                # Identity associations must survive even if the process stops
+                # between ledger publication, history removal and file removal.
+                targets = [self.store.jobs[identifier] for identifier in preview['job_ids']]
+                if any(protected(job) for job in targets):
+                    raise RuntimeError('Some work now needs recovery. Preview cleanup again.')
+                self.history.save_links(targets)
+                self.history.retain_files(preview['retained'])
+                self.history.pending_file.write(dict(version=1, files=preview['files']))
+                for root, plan in preview['previous'].items():
+                    StateFile(Path(root)/'campresso_cleanup_pending.json').write(dict(version=1, files=plan['files']))
+                for identifier in preview['job_ids']:
+                    del self.store.jobs[identifier]
+                self.run_ids.difference_update(preview['job_ids'])
+                self.save()
+                outcome = delete_preview_files(self.data, preview)
+                old_records = 0
+                for root, plan in preview['previous'].items():
+                    root = Path(root)
+                    previous = read_strict(root/'workflow.json')
+                    previous['jobs'] = [job for job in previous.get('jobs', []) if job['id'] not in plan['old_job_ids']]
+                    StateFile(root/'workflow.json').write(previous)
+                    old_records += len(plan['old_job_ids'])
+                    old_outcome = delete_preview_files(root, plan)
+                    outcome['removed_bytes'] += old_outcome['removed_bytes']
+                    outcome['retained'] += old_outcome['retained']
+                    StateFile(root/'campresso_cleanup_pending.json').write(dict(version=1, files={
+                        path: stamp for path, stamp in plan['files'].items() if Path(path).exists()}))
+                outcome['retained'] += [path+': changed/external/unverified; retained' for path in preview['retained']]
+                self.history.pending_file.write(dict(version=1, files={
+                    path: stamp for path, stamp in preview['files'].items() if Path(path).exists()}))
+                self.history.preview = None
+                return dict(records=len(preview['job_ids'])+old_records, **outcome)
+            finally:
+                self.cleaning = False
+                self.publish()
+
+    def restore_previous(self, identifier):
+        with self.history.lock_previous():
+            return self._restore_previous(identifier)
+
+    def _restore_previous(self, identifier):
+        with self.lock:
+            self.require_idle_cleanup()
+            entry = next((value for value in self.history.previous if value['id'] == identifier), None)
+            if not entry or entry.get('restored'):
+                raise RuntimeError('This previous record is already restored or unavailable.')
+            old = dict(entry['job'])
+            if not self.library or str(Path(old.get('library') or '').resolve()) != self.library:
+                raise RuntimeError('Select the recorded System Photo Library in Settings before inspecting this record.')
+            require_system_library(self.library)
+            media = old.get('media') or {}
+            old.setdefault('source_uuid', asset_key(media.get('uuid')))
+            old.setdefault('original_id', media.get('uuid'))
+            old.setdefault('result_id', old.get('new_uuid'))
+            old.setdefault('generation', uuid.uuid4().hex)
+            if not old.get('original_id') or not old.get('expected'):
+                raise RuntimeError('This record needs manual recovery. Its original files and journals have been retained.')
+            existing = self.store.find(old['source_uuid'], self.library)
+            if existing and existing.get('previous_work_id') == identifier:
+                entry['restored'] = True
+                self.history.save_previous()
+                return dict(message='This previous pair is already restored in the main gallery.')
+            if existing or old['id'] in self.store.jobs:
+                raise RuntimeError('This source already has current work. Inspect it in the main gallery.')
+            self.cleaning = True
+        try:
+            result = self.transport.native('inspect', self.native_params(old, expected=old['expected'],
+                operation=old.get('operation'), previous_work_id=identifier))
+            with self.lock:
+                if not (result.get('original_present') and result.get('result_present') and result.get('verified')):
+                    if result.get('completed_decision'):
+                        old.update(state='Completed', decision=result['completed_decision'],
+                                   result_id=result.get('result_id', old.get('result_id')),
+                                   operation=None, retry_safe=True, replacement_complete=True)
+                        self.history.save_links([old])
+                        entry['restored'] = True
+                        self.history.save_previous()
+                        return dict(message='The previous Photos decision was confirmed; its history remains cleared.')
+                    raise RuntimeError(result.get('detail', 'The previous Photos operation remains unresolved. No change was repeated.'))
+                old.update(state='Ready to review', original_id=result['original_id'], result_id=result['result_id'],
+                           previous_work_id=identifier,
+                           original_version=result['original_version'], result_version=result['result_version'],
+                           approval=None, operation=None, progress=None, retry_safe=True, excluded=False,
+                           source_size=old.get('source_size') or media.get('size'),
+                           result_size=old.get('result_size') or (old.get('output_fingerprint') or [None])[0],
+                           operations=old.get('operations') or [], warnings=old.get('warnings') or [],
+                           detail='Previous Photos pair inspected. Review again before deciding.')
+                self.store.jobs[old['id']] = old
+                self.save()
+                entry['restored'] = True
+                self.history.save_previous()
+                return dict(message='The previous pair is available in Review. No Photos changes were made.')
+        finally:
+            with self.lock:
+                self.cleaning = False
+                self.publish()
+
     def command(self, method, params):
         if method == 'initialize':
             self.publish()
             if self.library:
                 self.scan()
             return dict(protocol=PROTOCOL, version=4)
+        if method == 'history.previewCleanup':
+            with self.lock, self.history.lock_previous():
+                self.require_idle_cleanup()
+                preview = self.history.preview_cleanup(self.store.jobs.values())
+                self.cleanup_revision = self.revision
+                return preview
+        if method == 'history.clear':
+            return self.cleanup_history(params['token'])
+        if method == 'previous.inspect':
+            return self.restore_previous(params['id'])
         if method == 'catalog.refresh':
             self.scan()
             return {}
         if method == 'preferences.update':
             with self.lock:
+                if self.cleaning:
+                    raise RuntimeError('Wait for cleanup or previous-work inspection to finish.')
                 values = params['values']
                 path = values.get('library', self.library).strip()
                 if path:
@@ -737,6 +893,8 @@ class WorkflowController:
         if method == 'review.decide':
             with self.lock:
                 self.assert_writable()
+                if self.history.has_uncertain_previous():
+                    raise RuntimeError('Inspect uncertain previous Photos operations before applying decisions.')
                 if any(job['state'] == 'Needs attention' for job in self.store.jobs.values()):
                     raise RuntimeError('Inspect unresolved Photos operations before applying more decisions.')
                 if params['decision'] not in ('keep', 'revert'):
@@ -769,7 +927,7 @@ class WorkflowController:
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--data-dir', type=Path, default=Path.home()/'Library'/'Application Support'/'Video Queue')
+    parser.add_argument('--data-dir', type=Path, default=Path.home()/'Library'/'Application Support'/'CamPresso')
     parser.add_argument('--stdio', action='store_true')
     options = parser.parse_args(argv)
     if any(part.lower().endswith('.photoslibrary') for part in options.data_dir.resolve().parts):
@@ -791,7 +949,7 @@ def main(argv=None):
                     raise ValueError('Protocol message is too large.')
                 packet = json.loads(line, parse_constant=lambda value: (_ for _ in ()).throw(ValueError(value)))
                 if packet.get('protocol') != PROTOCOL:
-                    raise ValueError('The native app and backend protocol versions differ. Reinstall Video Queue.')
+                    raise ValueError('The native app and backend protocol versions differ. Reinstall CamPresso.')
                 if packet.get('type') in ('native.reply', 'native.progress'):
                     transport.receive(packet)
                 else:

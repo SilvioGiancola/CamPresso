@@ -3,9 +3,9 @@ import tempfile, unittest
 from pathlib import Path
 from unittest.mock import patch
 from types import SimpleNamespace
-from video_queue.photos_catalog import Media
-from video_queue.jobs import JobRunner, JobFailure
-from video_queue.engine import Cancelled
+from campresso.photos_catalog import Media
+from campresso.jobs import JobRunner, JobFailure
+from campresso.engine import Cancelled
 
 class FakeConverter:
     def stop(self):pass
@@ -25,71 +25,71 @@ class JobTests(unittest.TestCase):
     def tearDown(self):self.temp.cleanup()
     def test_auto_fetch_then_convert_then_import(self):
         stages=[]
-        with patch('video_queue.jobs.Converter',FakeConverter),patch('video_queue.jobs.fetch_video',return_value=str(self.original)) as fetch:
+        with patch('campresso.jobs.Converter',FakeConverter),patch('campresso.jobs.fetch_video',return_value=str(self.original)) as fetch:
             self.runner.run(self.job,self.settings,lambda s,p=None,*a:stages.append((s,p)))
         fetch.assert_called_once();self.assertEqual([c['action'] for c in self.calls],['check','finish'])
         self.assertEqual(stages[-1],('Completed',100));self.assertTrue(all(p!=100 for _,p in stages[:-1]))
     def test_folder_only_does_not_change_photos(self):
         self.job['import']=False
-        with patch('video_queue.jobs.Converter',FakeConverter),patch('video_queue.jobs.fetch_video',return_value=str(self.original)):
+        with patch('campresso.jobs.Converter',FakeConverter),patch('campresso.jobs.fetch_video',return_value=str(self.original)):
             self.runner.run(self.job,self.settings,lambda *a:None)
         self.assertEqual(self.calls,[])
     def test_no_removal_without_import(self):
         self.job.update(remove=True);self.job['import']=False
-        with patch('video_queue.jobs.Converter',FakeConverter),patch('video_queue.jobs.fetch_video') as fetch:
+        with patch('campresso.jobs.Converter',FakeConverter),patch('campresso.jobs.fetch_video') as fetch:
             with self.assertRaisesRegex(RuntimeError,'requires importing'):self.runner.run(self.job,self.settings,lambda *a:None)
         fetch.assert_not_called()
     def test_failed_conversion_cannot_import_delete(self):
         class Failing(FakeConverter):
             def convert(self,*a):raise RuntimeError('encode failed')
-        with patch('video_queue.jobs.Converter',Failing),patch('video_queue.jobs.fetch_video',return_value=str(self.original)):
+        with patch('campresso.jobs.Converter',Failing),patch('campresso.jobs.fetch_video',return_value=str(self.original)):
             with self.assertRaisesRegex(RuntimeError,'encode failed'):self.runner.run(self.job,self.settings,lambda *a:None)
         self.assertEqual([c['action'] for c in self.calls],['check'])
     def test_reject_output_inside_library(self):
         with self.assertRaisesRegex(RuntimeError,'outside'):JobRunner(self.root/'Library.photoslibrary'/'Work')
     def test_external_files_bypass_fetch_and_optional_import(self):
         self.job.update(media=None,path=str(self.original));self.job['import']=False
-        with patch('video_queue.jobs.Converter',FakeConverter),patch('video_queue.jobs.fetch_video') as fetch:self.runner.run(self.job,self.settings,lambda *a:None)
+        with patch('campresso.jobs.Converter',FakeConverter),patch('campresso.jobs.fetch_video') as fetch:self.runner.run(self.job,self.settings,lambda *a:None)
         fetch.assert_not_called();self.assertEqual(self.calls,[])
     def test_import_failure_retains_output_and_blocks_automatic_retry(self):
         def actions(request):
             if request['action']=='finish':raise JobFailure('native helper crashed',journal='recovery.json',retry_safe=False)
             return {'checked':True}
         self.runner.actions=actions
-        with patch('video_queue.jobs.Converter',FakeConverter),patch('video_queue.jobs.fetch_video',return_value=str(self.original)):
+        with patch('campresso.jobs.Converter',FakeConverter),patch('campresso.jobs.fetch_video',return_value=str(self.original)):
             with self.assertRaises(JobFailure) as caught:self.runner.run(self.job,self.settings,lambda *a:None)
         error=caught.exception
         self.assertTrue(Path(error.output).is_file());self.assertEqual(error.journal,'recovery.json');self.assertFalse(error.retry_safe)
     def test_preflight_failure_remains_safe_to_retry(self):
         runner=JobRunner(self.root/'AnotherWork')
         result=SimpleNamespace(returncode=1,stdout='{"error":"Access denied"}',stderr='')
-        with patch('video_queue.jobs.subprocess.run',return_value=result):
+        with patch('campresso.jobs.subprocess.run',return_value=result):
             with self.assertRaises(JobFailure) as caught:runner.actions({'action':'check'})
         self.assertTrue(caught.exception.retry_safe);self.assertIsNone(caught.exception.output)
     def test_native_crash_is_not_safe_to_retry_after_import_request(self):
         runner=JobRunner(self.root/'AnotherWork')
         result=SimpleNamespace(returncode=-6,stdout='',stderr='OC_PythonException')
-        with patch('video_queue.jobs.subprocess.run',return_value=result):
+        with patch('campresso.jobs.subprocess.run',return_value=result):
             with self.assertRaises(JobFailure) as caught:runner.actions({'action':'finish'})
         self.assertFalse(caught.exception.retry_safe);self.assertIn('OC_PythonException',str(caught.exception));self.assertTrue(caught.exception.journal.endswith('.json'))
     def test_empty_success_response_does_not_mark_import_complete(self):
         runner=JobRunner(self.root/'AnotherWork')
         result=SimpleNamespace(returncode=0,stdout='{}',stderr='')
-        with patch('video_queue.jobs.subprocess.run',return_value=result):
+        with patch('campresso.jobs.subprocess.run',return_value=result):
             with self.assertRaisesRegex(JobFailure,'did not confirm'):runner.actions({'action':'finish'})
     def test_unverified_or_incomplete_removal_response_is_rejected(self):
         runner=JobRunner(self.root/'AnotherWork')
         for response in ('{"new_uuid":"NEW","phase":"Imported","removed":false}',
                          '{"new_uuid":"NEW","phase":"Import verified","removed":false}'):
             result=SimpleNamespace(returncode=0,stdout=response,stderr='')
-            with patch('video_queue.jobs.subprocess.run',return_value=result):
+            with patch('campresso.jobs.subprocess.run',return_value=result):
                 with self.assertRaisesRegex(JobFailure,'did not confirm'):runner.actions({'action':'finish','remove':True})
     def test_stop_after_conversion_retains_saved_output(self):
         runner=self.runner
         class StopsAfterSaving(FakeConverter):
             def convert(self,*args):
                 result=super().convert(*args);runner.cancel.set();return result
-        with patch('video_queue.jobs.Converter',StopsAfterSaving),patch('video_queue.jobs.fetch_video',return_value=str(self.original)):
+        with patch('campresso.jobs.Converter',StopsAfterSaving),patch('campresso.jobs.fetch_video',return_value=str(self.original)):
             with self.assertRaises(Cancelled) as caught:runner.run(self.job,self.settings,lambda *a:None)
         self.assertTrue(Path(caught.exception.output).is_file());self.assertTrue(caught.exception.retry_safe)
         self.assertEqual([c['action'] for c in self.calls],['check'])

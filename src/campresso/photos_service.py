@@ -13,15 +13,15 @@ def selected_ids(values):
 def enqueue(values):
     identifiers=selected_ids(values)
     if not identifiers:raise ValueError('Select at least one video in Photos.')
-    app=Path.home()/'Applications'/'Video Queue.app'
-    if not app.is_dir():raise RuntimeError('Install Video Queue before using this Service.')
-    data=Path.home()/'Library'/'Application Support'/'Video Queue'
+    app=Path.home()/'Applications'/'CamPresso.app'
+    if not app.is_dir():raise RuntimeError('Install CamPresso before using this Service.')
+    data=Path.home()/'Library'/'Application Support'/'CamPresso'
     target=data/'Requests'/(uuid.uuid4().hex+'.json')
     # The Service runner may not be allowed to read Photos' preference files.
-    # Resolve the library inside Video Queue, with its own access permissions.
+    # Resolve the library inside CamPresso, with its own access permissions.
     StateFile(target).write(dict(version=1,action='convert1080',library=None,uuids=identifiers))
     result=subprocess.run(['/usr/bin/open',str(app)],capture_output=True,text=True,timeout=15)
-    if result.returncode:raise RuntimeError('The request was queued, but Video Queue could not open: '+result.stderr.strip())
+    if result.returncode:raise RuntimeError('The request was queued, but CamPresso could not open: '+result.stderr.strip())
 
 def library_candidates(request,cancel):
     """Use remembered and native paths; never require an enlarged Photos item."""
@@ -66,7 +66,7 @@ def load_selection(request,cancel):
         if not videos:raise RuntimeError('Select a video in Photos. Still pictures and Live Photo pictures cannot be converted to a 1080p video.')
         return videos,actual,len(rows)-len(videos)
     detail='\n\n'+ '\n'.join(errors[:2]) if errors else ''
-    raise RuntimeError('The selected items could not be read from an accessible Photos library. Choose the correct Library in Video Queue, click Scan, then run the Service again. Allow Full Disk Access if macOS denies access. Selecting a thumbnail in Photos is sufficient; full-screen view is not required.'+detail)
+    raise RuntimeError('The selected items could not be read from an accessible Photos library. Choose the correct Library in CamPresso, click Scan, then run the Service again. Allow Full Disk Access if macOS denies access. Selecting a thumbnail in Photos is sufficient; full-screen view is not required.'+detail)
 
 class PhotosService:
     def __init__(self,app):

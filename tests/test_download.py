@@ -2,8 +2,8 @@
 import tempfile, threading, subprocess, unittest
 from pathlib import Path
 from dataclasses import replace
-from video_queue.photos_catalog import Media, ScanCancelled
-from video_queue.photos_download import fetch_video, command, wait_process
+from campresso.photos_catalog import Media, ScanCancelled
+from campresso.photos_download import fetch_video, command, wait_process
 
 class DownloadTests(unittest.TestCase):
     def setUp(self):
@@ -22,7 +22,7 @@ class DownloadTests(unittest.TestCase):
     def fetch(self,**kwargs):return fetch_video(self.media,self.dest,self.lib,self.cancel,runner=self.runner,cli=self.cli,**kwargs)
     def test_download_publishes_valid_video_and_cleans_stage(self):
         result=Path(self.fetch());self.assertEqual(result.parent,self.dest.resolve());self.assertTrue(result.stat().st_size>0)
-        self.assertFalse(list(self.dest.glob('.videoqueue-download-*')))
+        self.assertFalse(list(self.dest.glob('.campresso-download-*')))
     def test_existing_name_not_overwritten(self):
         one=Path(self.fetch());content=one.read_bytes();two=Path(self.fetch())
         self.assertNotEqual(one,two);self.assertEqual(one.read_bytes(),content)

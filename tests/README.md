@@ -1,6 +1,6 @@
 # Existing test suite
 
-These are the existing `unittest` modules, moved from the repository root. Their imports and mock targets use the `video_queue` package. Moving them does not mean they have been run or passed.
+These are the existing `unittest` modules, moved from the repository root. Their imports and mock targets use the `campresso` package. Moving them does not mean they have been run or passed.
 
 Install the development package using the [developer guide](../docs/DEVELOPER_GUIDE.md). From the repository root, manual commands include:
 

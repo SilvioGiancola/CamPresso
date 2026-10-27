@@ -74,7 +74,7 @@ def validate_video(path,media,ffprobe=None,cancel=None):
 
 def resource_download(media,library,stage,cancel,report):
     """Keep native callbacks in a subprocess; cancellation stops its data request."""
-    process=subprocess.Popen([sys.executable,'-m','video_queue.photos_resource'],
+    process=subprocess.Popen([sys.executable,'-m','campresso.photos_resource'],
         stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,text=True,errors='replace')
     events=queue.Queue();diagnostics=[];complete=False;failure=None;started=time.monotonic();last=-1;reported=False
     def read():
@@ -125,7 +125,7 @@ def fetch_video(media,destination,library,cancel,report=lambda s:None,runner=wai
     dest=ensure_outside_library(destination,library);dest.mkdir(parents=True,exist_ok=True)
     if media.size and shutil.disk_usage(dest).free < media.size*2 + 256*1024**2:
         raise RuntimeError('Not enough local storage to download and save this original. Free space and retry.')
-    with tempfile.TemporaryDirectory(prefix='.videoqueue-download-',dir=dest) as temp:
+    with tempfile.TemporaryDirectory(prefix='.campresso-download-',dir=dest) as temp:
         stage=Path(temp)
         if runner is wait_process and cli is None:details=resource_download(media,library,stage,cancel,report)
         else:

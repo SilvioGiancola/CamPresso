@@ -82,6 +82,9 @@ final class AppModel: ObservableObject {
     @Published var authorizing = false
     @Published var photoAuthorized = PHPhotoLibrary.authorizationStatus(for: .readWrite) == .authorized
     @Published var runIDs = Set<String>()
+    @Published var previousWork: [JSONObject] = []
+    @Published var cleaning = false
+    @Published var retainedFiles: [JSONObject] = []
     let data: URL
     let media: NativeMedia
     let writer = PacketWriter()
@@ -101,7 +104,7 @@ final class AppModel: ObservableObject {
             guard let index = arguments.firstIndex(of: name), arguments.indices.contains(index+1) else { return nil }
             return arguments[index+1]
         }
-        data = URL(fileURLWithPath: option("--data-dir") ?? NSHomeDirectory()+"/Library/Application Support/Video Queue").resolvingSymlinksInPath()
+        data = URL(fileURLWithPath: option("--data-dir") ?? NSHomeDirectory()+"/Library/Application Support/CamPresso").resolvingSymlinksInPath()
         media = NativeMedia(data: data)
     }
     var processing: [VideoRow] { rows.filter(\.processing) }
@@ -156,10 +159,10 @@ final class AppModel: ObservableObject {
             let task = Process()
             let args = CommandLine.arguments
             let custom = args.firstIndex(of: "--backend-python").flatMap { args.indices.contains($0+1) ? args[$0+1] : nil }
-            let python = custom ?? NSHomeDirectory()+"/Library/Application Support/Video Queue/venv/bin/python"
+            let python = custom ?? NSHomeDirectory()+"/Library/Application Support/CamPresso/venv/bin/python"
             guard FileManager.default.isExecutableFile(atPath: python) else { throw WorkflowError(message: "Run Install.command to install the Python workflow backend.") }
             task.executableURL = URL(fileURLWithPath: python)
-            task.arguments = ["-m", "video_queue.backend", "--stdio", "--data-dir", data.path]
+            task.arguments = ["-m", "campresso.backend", "--stdio", "--data-dir", data.path]
             var environment = ProcessInfo.processInfo.environment
             environment["PATH"] = "/opt/homebrew/bin:/usr/local/bin:" + (environment["PATH"] ?? "/usr/bin:/bin")
             environment["PYTHONUNBUFFERED"] = "1"; task.environment = environment
@@ -184,7 +187,7 @@ final class AppModel: ObservableObject {
                     self.commandTimeouts.values.forEach { $0.cancel() }; self.commandTimeouts.removeAll()
                     self.media.cancel()
                     if self.closing { self.finishNativeClose() }
-                    else if task.terminationStatus != 0 && self.fatalError == nil { self.fatalError = "The workflow backend stopped. Open native.log for details, then reopen Video Queue." }
+                    else if task.terminationStatus != 0 && self.fatalError == nil { self.fatalError = "The workflow backend stopped. Open native.log for details, then reopen CamPresso." }
                 }
             }
             process = task; try task.run(); connected = true
@@ -192,7 +195,7 @@ final class AppModel: ObservableObject {
         } catch { fatalError = error.localizedDescription }
     }
     private func receive(_ packet: JSONObject) {
-        guard number(packet["protocol"]) == 1 else { fatalError = "App/backend versions differ. Reinstall Video Queue."; return }
+        guard number(packet["protocol"]) == 1 else { fatalError = "App/backend versions differ. Reinstall CamPresso."; return }
         let type = string(packet["type"])
         if type == "reply" {
             let id = string(packet["id"])
@@ -224,6 +227,9 @@ final class AppModel: ObservableObject {
                 scanning = value["scanning"] as? Bool == true; paused = value["paused"] as? Bool == true
                 catalogError = value["catalog_error"] as? String; fatalError = value["fatal_error"] as? String
                 runIDs = Set(value["run_ids"] as? [String] ?? [])
+                previousWork = value["previous_work"] as? [JSONObject] ?? []
+                cleaning = value["cleaning"] as? Bool == true
+                retainedFiles = value["retained_files"] as? [JSONObject] ?? []
             case "job":
                 let row = VideoRow(raw: object(packet["row"]))
                 if let index = rows.firstIndex(where: { $0.id == row.id }) { rows[index] = row } else { rows.append(row) }
@@ -267,6 +273,35 @@ final class AppModel: ObservableObject {
         Task { do { _ = try await request(method, params) } catch { notice = error.localizedDescription } }
     }
     func compress() { action("jobs.enqueue", ["ids": compressionTargets.map(\.id)]) }
+    func clearHistory() {
+        cleaning = true
+        Task {
+            defer { cleaning = false }
+            do {
+                let preview = try await request("history.previewCleanup")
+                let dialog = NSAlert()
+                dialog.messageText = "Clear conversion history?"
+                dialog.informativeText = "Remove \(Int(number(preview["records"]) ?? 0)) finished records and up to \(humanSize(number(preview["bytes"]))) of safe temporary files.\n\n\(Int(number(preview["protected_count"]) ?? 0)) unfinished/recovery records and \(Int(number(preview["retained_count"]) ?? 0)) changed/external files are protected. Apple Photos videos, settings and recovery journals stay unchanged."
+                dialog.addButton(withTitle: "Clear History and Temporary Files")
+                dialog.addButton(withTitle: "Cancel")
+                guard dialog.runModal() == .alertFirstButtonReturn else { return }
+                let result = try await request("history.clear", ["token": string(preview["token"])])
+                let retained = result["retained"] as? [String] ?? []
+                notice = "Cleared \(Int(number(result["records"]) ?? 0)) records and \(humanSize(number(result["removed_bytes"])))." +
+                    (retained.isEmpty ? "" : "\n\nSome files were retained. Run cleanup again to retry:\n" + retained.joined(separator: "\n"))
+            } catch { notice = error.localizedDescription }
+        }
+    }
+    func inspectPrevious(_ id: String) {
+        cleaning = true
+        Task {
+            defer { cleaning = false }
+            do {
+                let result = try await request("previous.inspect", ["id": id])
+                notice = string(result["message"]); section = .review
+            } catch { notice = error.localizedDescription }
+        }
+    }
     func review(_ row: VideoRow) {
         Task {
             do {
@@ -324,7 +359,7 @@ final class AppModel: ObservableObject {
     func beginClose() -> Bool {
         if closing { return false }
         if !processing.isEmpty {
-            let dialog = NSAlert(); dialog.messageText = "Stop and close Video Queue?"
+            let dialog = NSAlert(); dialog.messageText = "Stop and close CamPresso?"
             dialog.informativeText = "Downloads and conversions will stop. Finished Photos copies and pending reviews will remain available. An active Photos change will finish safely first."
             dialog.addButton(withTitle: "Stop and Close"); dialog.addButton(withTitle: "Keep Working")
             guard dialog.runModal() == .alertFirstButtonReturn else { return false }
@@ -350,7 +385,7 @@ final class AppModel: ObservableObject {
 // The framing queue owns its buffer, avoiding work on SwiftUI's main thread.
 final class PacketReader: @unchecked Sendable {
     private var buffer = Data()
-    let queue = DispatchQueue(label: "videoqueue.decode")
+    let queue = DispatchQueue(label: "campresso.decode")
     var callback: ((JSONObject) -> Void)?
     func append(_ data: Data) {
         queue.async {

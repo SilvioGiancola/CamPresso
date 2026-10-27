@@ -11,6 +11,7 @@ struct LibraryView: View {
     var body: some View {
         VStack(spacing: 0) {
             header
+            if model.library.isEmpty { BrandHeading().frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 16).padding(.bottom, 10) }
             if let fatal = model.fatalError { banner(fatal, icon: "exclamationmark.octagon", color: .red) }
             if let error = model.catalogError { banner(error, icon: "externaldrive.badge.exclamationmark", color: .orange) }
             if !model.photoAuthorized {
@@ -20,9 +21,17 @@ struct LibraryView: View {
                 }.padding(12).background(.blue.opacity(0.08))
             } else if !model.setupComplete {
                 HStack {
-                    Label("Choose your personal System Photo Library and conversion settings.", systemImage: "gearshape")
+                    VStack(alignment: .leading, spacing: 4) {
+                        Label("Choose your personal System Photo Library and conversion settings.", systemImage: "gearshape")
+                    }
                     Spacer(); Button("Open Settings…") { openSettings() }
                 }.padding(12).background(.blue.opacity(0.08))
+            }
+            if !model.previousWork.isEmpty {
+                HStack {
+                    Label("\(model.previousWork.count) previous review/recovery item(s) retained.", systemImage: "archivebox")
+                    Spacer(); Button("Previous work / Recovery…") { openSettings() }
+                }.font(.callout).padding(10).background(.orange.opacity(0.08))
             }
             if model.rows.contains(where: { $0.state == "Needs attention" }) {
                 HStack {
@@ -50,7 +59,7 @@ struct LibraryView: View {
         }
         .searchable(text: $model.search, placement: .toolbar, prompt: "Search videos")
         .sheet(item: $details) { row in DetailView(row: row).environmentObject(model) }
-        .alert("Video Queue", isPresented: Binding(get: { model.notice != nil }, set: { if !$0 { model.notice = nil } })) { Button("OK") { model.notice = nil } } message: { Text(model.notice ?? "") }
+        .alert("CamPresso", isPresented: Binding(get: { model.notice != nil }, set: { if !$0 { model.notice = nil } })) { Button("OK") { model.notice = nil } } message: { Text(model.notice ?? "") }
         .overlay { if model.closing { ZStack { Color.black.opacity(0.15); ProgressView("Stopping work and finishing Photos changes…").padding(25).background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14)) } } }
         .onReceive(NotificationCenter.default.publisher(for: .init("ToggleSummary"))) { _ in inspector.toggle() }
     }
@@ -58,7 +67,7 @@ struct LibraryView: View {
         VStack(spacing: 10) {
             HStack {
                 Text("Videos").font(.title2.bold())
-                Text(URL(fileURLWithPath: model.library).lastPathComponent).foregroundStyle(.secondary).lineLimit(1)
+                Text(model.library.isEmpty ? "Choose a Photos library" : URL(fileURLWithPath: model.library).lastPathComponent).foregroundStyle(.secondary).lineLimit(1)
                 if model.scanning { ProgressView().controlSize(.small); Text("Reading library…").font(.caption).foregroundStyle(.secondary) }
                 Spacer()
                 Button(model.selection.isEmpty ? "Select visible" : "Clear selection") {

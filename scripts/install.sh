@@ -13,7 +13,7 @@ installation_failed() {
 trap installation_failed ERR
 
 if [[ "$(uname -s)" != Darwin ]]; then
-  echo 'Video Queue requires macOS and Apple Photos.' >&2
+  echo 'CamPresso requires macOS and Apple Photos.' >&2
   exit 1
 fi
 if ! command -v brew >/dev/null; then
@@ -29,6 +29,6 @@ fi
 brew install python@3.13 ffmpeg exiftool
 PYTHON="$(brew --prefix python@3.13)/bin/python3.13"
 "$PYTHON" "$REPO_ROOT/scripts/install_macos.py"
-open "$HOME/Applications/Video Queue.app"
-echo "Installed: $HOME/Applications/Video Queue.app"
+open "$HOME/Applications/CamPresso.app"
+echo "Installed: $HOME/Applications/CamPresso.app"
 pause_terminal

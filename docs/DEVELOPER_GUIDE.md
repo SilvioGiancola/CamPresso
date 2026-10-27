@@ -13,7 +13,7 @@ source .venv/bin/activate
 python -m pip install -e .
 
 # Build an ad hoc signed bundle; does not install/launch it or access Photos.
-python scripts/build_macos.py 'dist/Video Queue.app'
+python scripts/build_macos.py 'dist/CamPresso.app'
 
 # Source-level checks; no application imports or test execution.
 python scripts/check_repository.py
@@ -33,11 +33,11 @@ xcrun swift build --package-path macos -c debug --show-bin-path
 Launch only when an interactive session is intended:
 
 ```bash
-python -m video_queue --native-app 'dist/Video Queue.app' \
+python -m campresso --native-app 'dist/CamPresso.app' \
   --data-dir "$PWD/.local/dev-data" --backend-python "$PWD/.venv/bin/python"
 ```
 
-`--native-app` accepts a bundle or Mach-O executable. The launcher rejects old shell/Python bundle launchers to prevent recursion. `--backend-python` selects the interpreter for `python -m video_queue.backend --stdio`. Installed Finder launches default to the shared application's venv.
+`--native-app` accepts a bundle or Mach-O executable. The launcher rejects old shell/Python bundle launchers to prevent recursion. `--backend-python` selects the interpreter for `python -m campresso.backend --stdio`. Installed Finder launches default to the shared application's venv.
 
 **An isolated data directory does not isolate Photos.** Native PhotoKit operations still target the user's System Photo Library. Launching can migrate/save data and clear safe temporary files. Do not launch the app as an unattended verification step against a personal library.
 
@@ -59,15 +59,15 @@ flowchart LR
 
 | Sources | Responsibility |
 | --- | --- |
-| [VideoQueueApp.swift](../macos/Sources/VideoQueue/VideoQueueApp.swift), [LibraryView.swift](../macos/Sources/VideoQueue/LibraryView.swift), [SettingsView.swift](../macos/Sources/VideoQueue/SettingsView.swift) | Native windows, menus, compact gallery, filtering, selection, preferences and quit routing. |
-| [AppModel.swift](../macos/Sources/VideoQueue/AppModel.swift) | Python process lifetime, asynchronous protocol, UI state, explicit decision confirmation and graceful shutdown. |
-| [ReviewView.swift](../macos/Sources/VideoQueue/ReviewView.swift) | Two AVPlayers, timed synchronized start, shared timeline, drift correction, divider/zoom and audio selection. |
-| [PhotosOperations.swift](../macos/Sources/VideoQueue/PhotosOperations.swift), [Support.swift](../macos/Sources/VideoQueue/Support.swift) | PhotoKit reads/writes, exact identifiers, version snapshots, native gate, journals, media ownership and permissions. |
-| [NativeEncoder.swift](../macos/Sources/VideoQueue/NativeEncoder.swift) | Current rendition, hardware encoding, HDR, composition, audio and native output checks. |
-| [backend.py](../src/video_queue/backend.py) | Headless scheduling, workflow mutations, catalog, frontend snapshots, Service handoff and recovery policy. |
-| [native_store.py](../src/video_queue/native_store.py), [native_validation.py](../src/video_queue/native_validation.py) | Strict persisted records/migration, hashes and independent FFmpeg checks. |
-| [photos_catalog.py](../src/video_queue/photos_catalog.py) | Read-only OSXPhotos queries, original resource size, favorites and positive shared flags. |
-| [legacy_app.py](../src/video_queue/legacy_app.py), older Photos/conversion helpers | Retained legacy compatibility and recovery contracts; not the production frontend or native write path. |
+| [CamPressoApp.swift](../macos/Sources/CamPresso/CamPressoApp.swift), [LibraryView.swift](../macos/Sources/CamPresso/LibraryView.swift), [SettingsView.swift](../macos/Sources/CamPresso/SettingsView.swift) | Native windows, menus, compact gallery, filtering, selection, preferences and quit routing. |
+| [AppModel.swift](../macos/Sources/CamPresso/AppModel.swift) | Python process lifetime, asynchronous protocol, UI state, explicit decision confirmation and graceful shutdown. |
+| [ReviewView.swift](../macos/Sources/CamPresso/ReviewView.swift) | Two AVPlayers, timed synchronized start, shared timeline, drift correction, divider/zoom and audio selection. |
+| [PhotosOperations.swift](../macos/Sources/CamPresso/PhotosOperations.swift), [Support.swift](../macos/Sources/CamPresso/Support.swift) | PhotoKit reads/writes, exact identifiers, version snapshots, native gate, journals, media ownership and permissions. |
+| [NativeEncoder.swift](../macos/Sources/CamPresso/NativeEncoder.swift) | Current rendition, hardware encoding, HDR, composition, audio and native output checks. |
+| [backend.py](../src/campresso/backend.py) | Headless scheduling, workflow mutations, catalog, frontend snapshots, Service handoff and recovery policy. |
+| [native_store.py](../src/campresso/native_store.py), [native_validation.py](../src/campresso/native_validation.py) | Strict persisted records/migration, hashes and independent FFmpeg checks. |
+| [photos_catalog.py](../src/campresso/photos_catalog.py) | Read-only OSXPhotos queries, original resource size, favorites and positive shared flags. |
+| [legacy_app.py](../src/campresso/legacy_app.py), older Photos/conversion helpers | Retained legacy compatibility and recovery contracts; not the production frontend or native write path. |
 
 `app.py` is now a lightweight native launcher. Its lazy historical `App` import resolves to `legacy_app.App` for old helper/test imports; normal startup does not import Tk. Install the optional `legacy` extra and Homebrew `python-tk@3.13` only if deliberately working on that old code. The old controller refuses workflow version 4 before creating a GUI or cleaning files.
 
@@ -84,7 +84,7 @@ The private transport is newline-delimited UTF-8 JSON over the child process's s
 | Native progress | `type: native.progress`, matching `id`, `stage`, nullable `percent` |
 | Native outcome | `type: native.reply`, matching `id`, `result` or `error` with `message`, `code`, `uncertain` |
 
-Frontend commands include `initialize`, `catalog.refresh`, `preferences.update`, `jobs.enqueue/pause/resume/stop`, `review.open/batch/decide`, `recovery.inspect`, `legacy.import`, `photos.show` and `shutdown`. Native methods are `prepare`, `encode`, `import`, `review`, `decide`, `inspect` and `cancel`.
+Frontend commands include `initialize`, `catalog.refresh`, `preferences.update`, `jobs.enqueue/pause/resume/stop`, `review.open/batch/decide`, `recovery.inspect`, `legacy.import`, `photos.show`, the cleanup/recovery commands below and `shutdown`. Native methods are `prepare`, `encode`, `import`, `review`, `decide`, `inspect` and `cancel`.
 
 Requests/replies are correlated independently; progress is asynchronous. The backend reader routes native replies directly to waiting workers rather than blocking behind commands. Workflow mutation uses an RLock; one backend owns each data directory via `.app.lock`. The UI owns its published state on the main actor. Media encoding runs on worker queues, with cancel checks, a stall watchdog and frame autorelease pools.
 
@@ -139,7 +139,7 @@ Native `PhotosTransactionGate` serializes writes and reconciliation even if a ba
 
 ## Persistence and migration
 
-Normal root: `~/Library/Application Support/Video Queue/`.
+Normal root: `~/Library/Application Support/CamPresso/`.
 
 | Path | Ownership / contents |
 | --- | --- |
@@ -161,9 +161,9 @@ Cleanup is restricted to known app-created filenames in NativeWork, excluding sy
 
 ## Installer and Service
 
-`Install.command` delegates to `scripts/install.sh`; `install_macos.py` holds the data lock, builds the native bundle first, installs the package from a temporary source copy, rebuilds/registers the Service, then swaps the app bundle. It preserves user data. `build_macos.py` sets deployment target/usage strings/entitlements and ad hoc signs the bundle. A trusted distribution would need an identity, hardened-runtime review and notarization separately.
+`Install.command` delegates to `scripts/install.sh`; `install_macos.py` holds the data lock, builds the native bundle first, installs the package from a temporary source copy, rebuilds/registers the Service, then publishes the app bundle and Service. The first rebrand installation starts with fresh settings/history and protected legacy recovery; later updates preserve CamPresso data. `build_macos.py` sets deployment target/usage strings/entitlements and ad hoc signs the bundle. A trusted distribution would need an identity, hardened-runtime review and notarization separately.
 
-The Automator Service uses the bundled AppleScript to extract exact selected IDs, invokes `python -m video_queue.photos_service`, writes `Requests/<uuid>.json` and opens the installed app. The backend accepts protocol 1 / `convert1080`, validates IDs against the loaded video catalog and queues the same compression workflow with a 1080p override. Setup must already allow writes. A Service request never includes deletion approval. Existing request format and application data locations remain compatible.
+The Automator Service uses the bundled AppleScript to extract exact selected IDs, invokes `python -m campresso.photos_service`, writes `Requests/<uuid>.json` and opens the installed app. The backend accepts protocol 1 / `convert1080`, validates IDs against the loaded video catalog and queues the same compression workflow with a 1080p override. Setup must already allow writes. A Service request never includes deletion approval. The request wire format remains compatible; the new Service uses the CamPresso data root.
 
 ## Verification and releases
 
@@ -172,3 +172,18 @@ No tests or live Photos operations were run for this implementation. Static repo
 For a release, record actual compiler/tool versions, build results, test coverage gaps and any explicitly authorized live-library operations. Build success is not proof of playback/HDR correctness or iCloud synchronization. Never run acceptance against a personal library merely because app data is isolated. The GitHub workflow performs static checks only.
 
 Keep version metadata in `pyproject.toml`; the native bundle reads it at build time. Package discovery includes new Python modules; `MANIFEST.in` includes native source for source distributions. Keep generated bundles, media, logs, environments and personal state out of commits. Commit/push/publish only when requested.
+
+
+## CamPresso identity, fresh install and cleanup
+
+The public package/CLI is `campresso`; the Swift product and executable are `CamPresso`; bundle ID is `local.silvio.campresso`. The GitHub repository is `SilvioGiancola/CamPresso`. The application data root is `~/Library/Application Support/CamPresso`. First install starts with no library/default preferences/empty workflow; library auto-discovery does not silently restore a prior selection. Subsequent updates retain the new installation’s state.
+
+The installer records its ownership/phase in `installation.json`, refuses unrecognized existing data, and locks both current and previous roots. It builds the app before touching previous history. The previous installation’s pending reviews/uncertain operations are copied as metadata to `PreviousWork.json`; journals/media are not moved. A minimal `asset_links.json` ledger preserves only source/result/generated identifiers, library, decision and recovery association. Full completed job details are removed from active history. The previous app name/IDs occur only in explicit compatibility code/documentation; historical filesystem/journal strings must not be blindly renamed.
+
+Additive protocol-1 methods are `history.previewCleanup`, `history.clear` and `previous.inspect`, with native `storage.status`. Preview returns a one-use token, record count, byte estimate and protected count. Confirmation requires the same workflow revision and an idle backend/native host. Both current and previous storage locks are held during confirmed cleanup. Once a previous review is resolved, a later cleanup may release its unchanged tracked recovery files at their original paths. The backend publishes identity/retained-file manifests and a cleanup intent before removing job records or bytes. `cleanup_pending.json` retains failed removals for retry; `retained_files.json` records changed/external/unverified paths for visibility. Only unchanged regular files under recognized app-owned media roots are disposable; source references, hard links, symlinks and Photos bundles are protected.
+
+`PreviousWork.json` records the original root/journal/job and whether it was restored. Native inspection accepts a previous-work ID and reads only the journal recorded in that manifest, checking library/source/generation. It makes no Photos writes. Restoring a verified pair clears approvals and returns it to Review; incomplete/uncertain evidence stays in Recovery. Uncertain previous writes block new Photos imports/decisions until inspection, while bounded download/encoding work can continue. A restored item’s historical journal remains unchanged. This is independent of ordinary version-3-to-4 workflow migration, retained for older helper compatibility.
+
+The Service is **CamPresso — Compress to 1080p**. Its identifier is `local.silvio.campresso.convert1080service`; request protocol 1 is unchanged. The installer creates a fresh venv rather than moving the old environment. It removes only previous app/Service bundles with expected bundle identifiers after publishing the new installation. Legacy recovery roots are retained; unrelated user files and Photos assets are never deleted by installation or history cleanup.
+
+Brand source and deterministic export instructions are in the [branding guide](BRANDING.md). The build bundles the mark PNG and ICNS before signing. Package source distributions include the Swift asset exporter and brand files.

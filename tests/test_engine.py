@@ -2,13 +2,13 @@
 import hashlib, shutil, subprocess, sys, tempfile, threading, time, unittest
 from pathlib import Path
 from unittest.mock import patch
-from video_queue.engine import Converter, Cancelled
+from campresso.engine import Converter, Cancelled
 
 class TestConverter(Converter):
     __test__=False
     def __init__(self):
         realwhich = shutil.which
-        with patch('video_queue.engine.shutil.which', side_effect=lambda t: '/mock/exiftool' if t=='exiftool' else realwhich(t)):
+        with patch('campresso.engine.shutil.which', side_effect=lambda t: '/mock/exiftool' if t=='exiftool' else realwhich(t)):
             super().__init__()
         self.fail_metadata=False
     def run(self,args,*a,**kw):
@@ -37,12 +37,12 @@ class EngineTests(unittest.TestCase):
         v=self.c.probe(out)['streams'][0];self.assertEqual(v['codec_name'],'hevc');self.assertEqual(v['codec_tag_string'],'hvc1')
     def test_replacement_backup(self):
         self.settings['replace']=True;out,_=self.convert()
-        self.assertEqual(out,str(self.source));backups=list((self.root/'Video Queue Originals').iterdir())
+        self.assertEqual(out,str(self.source));backups=list((self.root/'CamPresso Originals').iterdir())
         self.assertEqual(len(backups),1);self.assertEqual(backups[0].read_bytes(),self.original);self.assertLess(self.source.stat().st_size,len(self.original))
     def test_failure_keeps_original(self):
         self.settings['replace']=True;self.c.fail_metadata=True
         with self.assertRaisesRegex(RuntimeError,'Metadata copy'):self.convert()
-        self.assertEqual(self.source.read_bytes(),self.original);self.assertFalse(list(self.root.glob('.videoqueue-*')))
+        self.assertEqual(self.source.read_bytes(),self.original);self.assertFalse(list(self.root.glob('.campresso-*')))
     def test_cancel_keeps_original(self):
         self.c.cancel.set()
         with self.assertRaises(Cancelled):self.convert()
@@ -56,7 +56,7 @@ class EngineTests(unittest.TestCase):
             if state=='Converting' and p>0:self.c.stop()
         with self.assertRaises(Cancelled):self.c.convert(self.source,self.settings,report)
         self.assertEqual(self.source.read_bytes(),self.original)
-        self.assertFalse(list(self.root.glob('.videoqueue-*')))
+        self.assertFalse(list(self.root.glob('.campresso-*')))
     def test_hdr_refused(self):
         realprobe=self.c.probe
         def probe(path):
@@ -79,14 +79,14 @@ class EngineTests(unittest.TestCase):
     def test_invalid_settings_do_not_leave_temporary_files(self):
         self.settings['size']='not a resolution'
         with self.assertRaises(RuntimeError):self.convert()
-        self.assertFalse(list(self.root.glob('.videoqueue-*')))
+        self.assertFalse(list(self.root.glob('.campresso-*')))
     def test_nonfinite_duration_is_rejected(self):
         realprobe=self.c.probe
         def probe(path):
             data=realprobe(path);data['format']['duration']='nan';return data
         self.c.probe=probe
         with self.assertRaisesRegex(RuntimeError,'duration'):self.convert()
-        self.assertFalse(list(self.root.glob('.videoqueue-*')))
+        self.assertFalse(list(self.root.glob('.campresso-*')))
     def test_source_changed(self):
         originalrun=self.c.run
         def run(args,*a,**kw):

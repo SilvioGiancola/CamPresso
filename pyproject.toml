@@ -3,9 +3,9 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "mac-video-library-converter"
-version = "4.0.0"
-description = "Review and replace Apple Photos videos with smaller compressed copies."
+name = "campresso"
+version = "4.1.0"
+description = "CamPresso — Action, packed lighter. Compress and review Apple Photos videos."
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
@@ -22,17 +22,17 @@ classifiers = [
 legacy = ["tkinterdnd2==0.6.3", "pyobjc-framework-Photos; sys_platform == 'darwin'"]
 
 [project.urls]
-Repository = "https://github.com/SilvioGiancola/MacVideoLibraryConverter"
-Documentation = "https://github.com/SilvioGiancola/MacVideoLibraryConverter/blob/main/docs/USER_GUIDE.md"
-Issues = "https://github.com/SilvioGiancola/MacVideoLibraryConverter/issues"
+Repository = "https://github.com/SilvioGiancola/CamPresso"
+Documentation = "https://github.com/SilvioGiancola/CamPresso/blob/main/docs/USER_GUIDE.md"
+Issues = "https://github.com/SilvioGiancola/CamPresso/issues"
 
 [project.scripts]
-video-queue = "video_queue.app:main"
+campresso = "campresso.app:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
-include = ["video_queue*"]
+include = ["campresso*"]
 namespaces = false
 
 [tool.setuptools.package-data]
-video_queue = ["resources/*.applescript"]
+campresso = ["resources/*.applescript"]

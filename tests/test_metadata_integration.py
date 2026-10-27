@@ -1,7 +1,7 @@
 """Run real FFmpeg/ExifTool metadata preservation on disposable fixtures."""
 import shutil, subprocess, tempfile, unittest
 from pathlib import Path
-from video_queue.engine import Converter
+from campresso.engine import Converter
 
 @unittest.skipUnless(all(shutil.which(tool) for tool in ('ffmpeg','ffprobe','exiftool')),'FFmpeg and ExifTool required')
 class MetadataIntegrationTests(unittest.TestCase):

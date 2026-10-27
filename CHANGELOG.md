@@ -1,6 +1,14 @@
 # Changelog
 
-## Unreleased — 4.0.0 native workflow
+## Unreleased — 4.1.0 CamPresso
+
+- Rebrand app, executable, Swift target, Python package/CLI, Service, documentation and GitHub links as CamPresso — Action, packed lighter.
+- Add editable espresso/orange/cream vector logos, transparent PNGs and a bundled macOS icon, with deterministic export tooling.
+- Start in a new owned data directory/venv with blank preferences and history; preserve unfinished previous reviews/recovery separately.
+- Add Settings → Storage → Clear conversion history with preview, protected records, minimal asset links and retryable safe-file cleanup.
+- Update existing test imports for the package rename. Static checks and native builds only; no tests or live Photos operations executed.
+
+## Previous native work — 4.0.0
 
 ### Added
 
@@ -32,13 +40,13 @@
 
 - Separate Settings window for the Photos library and conversion defaults, with Save and Cancel.
 - Automatic loading of the saved library at launch, plus a Refresh action.
-- Python package metadata, an editable development install and `video-queue` / `python -m video_queue` entry points.
+- Python package metadata, an editable development install and `campresso` / `python -m campresso` entry points.
 - `--data-dir` for launching the GUI with separate application state.
 - Repository static checks, GitHub Actions configuration and contributor documentation.
 
 ### Changed
 
-- Runtime code lives under `src/video_queue/`, existing tests under `tests/`, and installation tools under `scripts/`.
+- Runtime code lives under `src/campresso/`, existing tests under `tests/`, and installation tools under `scripts/`.
 - Conversion defaults are remembered across launches and apply to newly queued videos.
 - The installer installs the package and bundled Service resource, and reads its version/dependencies from `pyproject.toml`.
 - The installer holds the app's shared storage lock during the runtime update.
@@ -46,7 +54,7 @@
 
 ### Fixed
 
-- Replaced Tk's demonstration menus with Video Queue menus and native Settings/Quit handlers.
+- Replaced Tk's demonstration menus with CamPresso menus and native Settings/Quit handlers.
 - Closing during downloads or conversion asks for confirmation, cancels work and waits for tracked workers before cleanup.
 - Polling continues after callback errors so stale busy flags cannot keep shutdown waiting indefinitely.
 

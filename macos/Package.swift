@@ -2,9 +2,9 @@
 import PackageDescription
 
 let package = Package(
-    name: "VideoQueue",
+    name: "CamPresso",
     platforms: [.macOS("26.0")],
-    products: [.executable(name: "VideoQueue", targets: ["VideoQueue"])],
-    targets: [.executableTarget(name: "VideoQueue")],
+    products: [.executable(name: "CamPresso", targets: ["CamPresso"])],
+    targets: [.executableTarget(name: "CamPresso")],
     swiftLanguageModes: [.v5]
 )

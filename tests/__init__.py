@@ -1,1 +1,1 @@
-"""Existing unit, tool integration and GUI checks for Video Queue."""
+"""Existing unit, tool integration and GUI checks for CamPresso."""

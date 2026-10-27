@@ -2,10 +2,10 @@
 import queue, tempfile, time, unittest, tkinter as tk
 from pathlib import Path
 from unittest.mock import patch
-from video_queue.photos_catalog import Media
+from campresso.photos_catalog import Media
 
 try:
-    from video_queue.app import App
+    from campresso.app import App
 except ModuleNotFoundError as error:
     if error.name!='tkinterdnd2':raise
     App=None
@@ -52,7 +52,7 @@ class GuiTests(unittest.TestCase):
         def fetch(media,dest,*args):
             path=dest/'download.mp4';path.write_bytes(b'fixture');return str(path)
         browser.previews.fetcher=fetch;browser.previews.validator=lambda *args:None
-        with patch('video_queue.photos_browser.subprocess.Popen') as player:
+        with patch('campresso.photos_browser.subprocess.Popen') as player:
             browser.preview_selected();deadline=time.monotonic()+5
             while browser.busy and time.monotonic()<deadline:self.app.root.update();time.sleep(.01)
             self.assertFalse(browser.busy);player.assert_called_once()

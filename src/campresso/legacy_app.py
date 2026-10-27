@@ -24,14 +24,14 @@ def asset_id(value):return str(value or '').split('/')[0].upper()
 class App:
     SETTING_CHOICES={'codec':('Video codec','HEVC',('HEVC','H.264')),'size':('Resolution (p)','1080',('720','1080','2160')),'quality':('Quality','Balanced',('High','Balanced','Small')),'container':('File format','MP4',('MP4','MOV'))}
     def __init__(self,data=None,files=()):
-        self.data=Path(data) if data is not None else Path.home()/'Library'/'Application Support'/'Video Queue'
+        self.data=Path(data) if data is not None else Path.home()/'Library'/'Application Support'/'CamPresso'
         self.workflow=StateFile(self.data/'workflow.json');self.data.mkdir(parents=True,exist_ok=True)
         self.storage_lock=StorageLock(self.data)
         from .native_store import read_strict
         if read_strict(self.workflow.path).get("version", 3) >= 4:
             self.storage_lock.close()
-            raise RuntimeError("This data was migrated to the native app. Use Video Queue 4 or later.")
-        self.logfile=self.data/'conversion.log';self.logger=logging.getLogger('videoqueue');self.logger.setLevel(logging.INFO)
+            raise RuntimeError("This data was migrated to the native app. Use CamPresso 4 or later.")
+        self.logfile=self.data/'conversion.log';self.logger=logging.getLogger('campresso');self.logger.setLevel(logging.INFO)
         if not self.logger.handlers:
             handler=logging.FileHandler(self.logfile,encoding='utf-8');handler.setFormatter(logging.Formatter('%(asctime)s %(message)s'));self.logger.addHandler(handler)
         self.items={};self.events=queue.Queue();self.active=False;self.current=None;self.runner=None;self.batch=[];self.pause_requested=False;self.closing=False;self.closed=False;self.cleanup_started=False;self.ui_ready=False
@@ -72,13 +72,13 @@ class App:
         self.root.after_idle(lambda:self.browser.scan(automatic=True))
     def configure_menu(self):
         """Replace Tk's demonstration menus and route native macOS actions."""
-        self.root.tk.call('tk','appname','Video Queue')
+        self.root.tk.call('tk','appname','CamPresso')
         self.menubar=tk.Menu(self.root,tearoff=False)
         mac=sys.platform=='darwin';modifier='Command' if mac else 'Control'
         if mac:
             application=tk.Menu(self.menubar,name='apple',tearoff=False)
-            application.add_command(label='About Video Queue',command=self.show_about)
-            self.menubar.add_cascade(label='Video Queue',menu=application)
+            application.add_command(label='About CamPresso',command=self.show_about)
+            self.menubar.add_cascade(label='CamPresso',menu=application)
             self.root.createcommand('tkAboutDialog',self.show_about)
             self.root.createcommand('tk::mac::ShowHelp',self.show_help)
             self.root.createcommand('tk::mac::ShowPreferences',self.show_settings)
@@ -87,7 +87,7 @@ class App:
         file_menu.add_command(label='Close Window',accelerator=modifier+'+W',command=self.close_window)
         if not mac:
             file_menu.add_command(label='Settings…',command=self.show_settings)
-            file_menu.add_command(label='Quit Video Queue',command=self.close)
+            file_menu.add_command(label='Quit CamPresso',command=self.close)
         self.menubar.add_cascade(label='File',menu=file_menu)
         edit_menu=tk.Menu(self.menubar,tearoff=False)
         for label,key in [('Undo','Z'),('Redo','Shift+Z'),('Cut','X'),('Copy','C'),('Paste','V'),('Select All','A')]:
@@ -97,9 +97,9 @@ class App:
             window_menu=tk.Menu(self.menubar,name='window',tearoff=False)
             self.menubar.add_cascade(label='Window',menu=window_menu)
         help_menu=tk.Menu(self.menubar,name='help',tearoff=False)
-        help_menu.add_command(label='Video Queue User Guide',command=self.show_help)
+        help_menu.add_command(label='CamPresso User Guide',command=self.show_help)
         help_menu.add_command(label='Permissions help…',command=self.browser.permissions_help)
-        if not mac:help_menu.add_command(label='About Video Queue',command=self.show_about)
+        if not mac:help_menu.add_command(label='About CamPresso',command=self.show_about)
         self.menubar.add_cascade(label='Help',menu=help_menu)
         # macOS recognizes .apple/.window/.help only when the menu is attached.
         self.root.configure(menu=self.menubar)
@@ -117,14 +117,14 @@ class App:
         self.root.deiconify()
         if self.settings_window is not None and self.settings_window.winfo_exists():
             self.settings_window.deiconify();self.settings_window.lift();self.settings_window.focus_set();return
-        window=tk.Toplevel(self.root);self.settings_window=window;window.title('Video Queue — Settings');window.transient(self.root);window.resizable(True,False)
+        window=tk.Toplevel(self.root);self.settings_window=window;window.title('CamPresso — Settings');window.transient(self.root);window.resizable(True,False)
         window.protocol('WM_DELETE_WINDOW',self.close_settings)
         content=ttk.Frame(window,padding=16);content.pack(fill='both',expand=True)
         library=ttk.LabelFrame(content,text='Photos library',padding=10);library.pack(fill='x')
         self.settings_library=tk.StringVar(value=self.browser.library.get())
         self.settings_library_entry=ttk.Entry(library,textvariable=self.settings_library,width=62);self.settings_library_entry.pack(side='left',fill='x',expand=True)
         self.settings_choose=ttk.Button(library,text='Choose…',command=self.choose_settings_library);self.settings_choose.pack(side='left',padx=(8,0))
-        ttk.Label(content,text='The saved library loads automatically when Video Queue opens.\nCompression and replacement require the System Photo Library.',wraplength=560).pack(anchor='w',pady=(6,12))
+        ttk.Label(content,text='The saved library loads automatically when CamPresso opens.\nCompression and replacement require the System Photo Library.',wraplength=560).pack(anchor='w',pady=(6,12))
         compression=ttk.LabelFrame(content,text='Conversion settings',padding=10);compression.pack(fill='x')
         self.settings_drafts={}
         for index,(key,(label,_,choices)) in enumerate(self.SETTING_CHOICES.items()):
@@ -181,13 +181,13 @@ class App:
             self.browser.catalog_rows=[];self.browser.catalog_loaded=False;self.browser.actual_library=path;self.browser.page=0;self.refresh(True)
         if not self.library_change_blocked() and (changed or not self.browser.catalog_loaded):self.browser.scan()
     def show_about(self):
-        messagebox.showinfo('About Video Queue','Video Queue\n\nCompress → Review → Replace\n\nReview smaller videos before replacing their originals in Apple Photos.',parent=self.root)
+        messagebox.showinfo('About CamPresso','CamPresso\n\nCompress → Review → Replace\n\nReview smaller videos before replacing their originals in Apple Photos.',parent=self.root)
     def show_help(self):
-        url='https://github.com/SilvioGiancola/MacVideoLibraryConverter/blob/main/docs/USER_GUIDE.md'
+        url='https://github.com/SilvioGiancola/CamPresso/blob/main/docs/USER_GUIDE.md'
         try:
             if not webbrowser.open(url):raise OSError('No browser could be opened.')
         except (OSError,webbrowser.Error) as error:
-            messagebox.showerror('Video Queue Help',f'Could not open the user guide: {error}\n\n{url}',parent=self.root)
+            messagebox.showerror('CamPresso Help',f'Could not open the user guide: {error}\n\n{url}',parent=self.root)
     def settings(self):return dict(codec=self.codec.get(),size=self.size.get(),quality=self.quality.get(),container=self.container.get(),folder=str(self.data/'Workflow'/'Converted'),replace=False,require_smaller=True)
     def find_job(self,media):
         for identifier,job in self.items.items():
@@ -726,12 +726,12 @@ class App:
         running=self.active or self.browser.busy or self.navigating_photos or bool(self.batch or self.replacements or self.browser.download_queue) or any(job.get('compression_pending') for job in self.items.values()) or self.workers_running()
         pending=any(self.has_output(job) and not job.get('verified') and job.get('retry_safe',True) for job in self.items.values())
         if running or pending:
-            text=('Downloads and conversions will be stopped, queued work will be cancelled, and Video Queue will close.\n\n' if running else 'Unreviewed compressed videos will be discarded and Video Queue will close.\n\n')
+            text=('Downloads and conversions will be stopped, queued work will be cancelled, and CamPresso will close.\n\n' if running else 'Unreviewed compressed videos will be discarded and CamPresso will close.\n\n')
             text+='Temporary working files will be cleared. Recovery copies for unresolved Photos operations will be kept.'
             if self.active and self.current in self.items and self.items[self.current].get('operation')=='replace':text+='\n\nAn approved Photos change already in progress will finish before the app closes.'
             text+='\n\nStop and close?' if running else '\n\nDiscard and close?'
             self.close_prompt_open=True
-            try:confirmed=messagebox.askyesno('Stop and close Video Queue?' if running else 'Close Video Queue?',text,parent=self.root)
+            try:confirmed=messagebox.askyesno('Stop and close CamPresso?' if running else 'Close CamPresso?',text,parent=self.root)
             finally:self.close_prompt_open=False
             if not confirmed:return
         self.begin_close()
@@ -798,7 +798,7 @@ def main(argv=None):
     options=parser.parse_args(argv)
     try:App(data=options.data_dir,files=options.videos).root.mainloop()
     except RuntimeError as error:
-        messagebox.showerror('Video Queue',str(error));return 1
+        messagebox.showerror('CamPresso',str(error));return 1
     return 0
 
 if __name__=='__main__':raise SystemExit(main())

@@ -6,7 +6,7 @@ Read the [developer guide](docs/DEVELOPER_GUIDE.md) for setup, architecture and 
 
 1. Create a focused branch from the current `main`, for example `fix/download-cancellation` or `chore/repository-layout`.
 2. Install the package in a separate development environment with `python -m pip install -e .`.
-3. Keep native UI/media changes under `macos/Sources/VideoQueue/`, Python orchestration under `src/video_queue/`, existing checks under `tests/`, installation tools under `scripts/`, and guides under `docs/`.
+3. Keep native UI/media changes under `macos/Sources/CamPresso/`, Python orchestration under `src/campresso/`, existing checks under `tests/`, installation tools under `scripts/`, and guides under `docs/`.
 4. Update the relevant guide and the Unreleased section of [CHANGELOG.md](CHANGELOG.md) when behavior or setup changes.
 5. Run the static checks below. Run tests only when requested, using their documented requirements and limitations, and report exactly which checks ran. Native compilation is separate from test execution.
 6. Review `git diff` and `git status`, commit related files together with a descriptive message, and open a pull request. Summarize the change, checks, known gaps and any Photos operations performed.
@@ -21,7 +21,7 @@ The GitHub Actions workflow runs static checks on pushes and pull requests. It d
 ## Code conventions
 
 - Use four-space indentation, descriptive names and small functions for new or substantially changed code. Follow the surrounding code when making a narrow fix; keep broad formatting changes separate from behavior changes.
-- Use package-relative imports inside `video_queue`, and `video_queue.*` imports in external tools and tests. Launch helpers with `python -m video_queue.<module>`.
+- Use package-relative imports inside `campresso`, and `campresso.*` imports in external tools and tests. Launch helpers with `python -m campresso.<module>`.
 - Keep the package initializer free of GUI startup, native access and other side effects.
 - Define dependency and release-version changes in `pyproject.toml`. Include bundled non-Python resources in its package-data configuration.
 - Keep generated media, environments, credentials, logs and personal workflow data out of commits. Generate media fixtures in temporary directories; use `.local/` for disposable local development files.

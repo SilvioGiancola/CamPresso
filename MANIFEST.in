@@ -4,3 +4,5 @@ recursive-include docs *.md
 recursive-include scripts *.py *.sh
 recursive-include tests *.py *.md
 recursive-include macos *.swift
+recursive-include scripts *.swift
+recursive-include assets *.svg *.png *.icns

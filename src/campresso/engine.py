@@ -1,4 +1,4 @@
-"""Video Queue conversion engine. Originals are never touched until verification."""
+"""CamPresso conversion engine. Originals are never touched until verification."""
 import json, math, os, queue, shutil, subprocess, tempfile, threading, uuid
 from pathlib import Path
 from .quicktime_tracks import restore_track_dates, metadata_mismatches
@@ -121,7 +121,7 @@ class Converter:
         folder.mkdir(parents=True, exist_ok=True)
         if shutil.disk_usage(folder).free < initial.st_size + 256 * 1024**2:
             raise RuntimeError('Not enough free space for compression. Free local storage and retry; original kept.')
-        fd, tempname = tempfile.mkstemp(prefix='.videoqueue-', suffix=extension, dir=folder)
+        fd, tempname = tempfile.mkstemp(prefix='.campresso-', suffix=extension, dir=folder)
         os.close(fd)
         temp = Path(tempname)
         try:
@@ -171,7 +171,7 @@ class Converter:
             if settings['replace']:
                 if outputsize >= initial.st_size:
                     raise RuntimeError('Converted file is not smaller. Original kept; try Small quality.')
-                backupdir = source.parent / 'Video Queue Originals'
+                backupdir = source.parent / 'CamPresso Originals'
                 backupdir.mkdir(exist_ok=True)
                 backup = backupdir / (source.stem + '-' + uuid.uuid4().hex[:10] + source.suffix)
                 # A hard link retains the complete original, without copying it.

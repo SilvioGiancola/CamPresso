@@ -28,7 +28,7 @@ class JobRunner:
             return JobFailure(message+'\nJournal: '+request['journal'],journal=request['journal'],retry_safe=request.get('action') in ('check','verify','inspect'))
         # Let an in-flight Photos transaction finish; do not kill while library writes.
         try:
-            p=subprocess.run([sys.executable,'-m','video_queue.photos_actions'],input=json.dumps(request,allow_nan=False),capture_output=True,text=True,errors='replace')
+            p=subprocess.run([sys.executable,'-m','campresso.photos_actions'],input=json.dumps(request,allow_nan=False),capture_output=True,text=True,errors='replace')
         except (OSError,ValueError) as error:raise failure('Photos helper could not start: '+str(error)) from error
         try:
             result=json.loads(p.stdout.strip().splitlines()[-1])

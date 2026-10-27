@@ -16,6 +16,9 @@ struct SettingsView: View {
 
     var body: some View {
         Form {
+            Section {
+                BrandHeading()
+            }
             Section("Photos library") {
                 HStack {
                     TextField("Library path", text: $library)
@@ -47,6 +50,35 @@ struct SettingsView: View {
             Section("Compress → Review → Decide") {
                 Toggle("I understand compression adds a smaller copy to Photos before review.", isOn: $accepted)
                 Text("Your original stays until Keep Compressed. Revert removes only the generated copy. Dates, location, favorites, hidden status and writable regular albums are copied. Faces, edit history and some Photos metadata cannot transfer. Pending reviews survive closing; safe app-managed temporary files are cleared.").font(.caption).foregroundStyle(.secondary)
+            }
+            Section("Storage") {
+                Button("Clear conversion history…") { model.clearHistory() }
+                    .disabled(!model.connected || !model.processing.isEmpty || model.scanning || model.cleaning || model.closing)
+                Text("Clear finished history and safe local temporary files. Photos videos, pending reviews and recovery journals are preserved.").font(.caption).foregroundStyle(.secondary)
+                if !model.retainedFiles.isEmpty {
+                    DisclosureGroup("Retained files (\(model.retainedFiles.count))") {
+                        ForEach(model.retainedFiles, id: \.previousWorkIdentity) { item in
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text(string(item["path"])).font(.caption).textSelection(.enabled)
+                                Text("\(humanSize(number(item["bytes"]))) · \(string(item["reason"]))").font(.caption2).foregroundStyle(.secondary)
+                            }
+                        }
+                    }
+                }
+            }
+            if !model.previousWork.isEmpty {
+                Section("Previous work / Recovery") {
+                    ForEach(model.previousWork, id: \.previousWorkIdentity) { item in
+                        VStack(alignment: .leading, spacing: 5) {
+                            Text(string(item["name"])).lineLimit(1)
+                            Text("\(string(item["state"])) · \(humanSize(number(item["bytes"]))) retained").font(.caption)
+                            Text(string(item["library"])).font(.caption2).textSelection(.enabled)
+                            Text(string(item["reason"])).font(.caption).foregroundStyle(.secondary)
+                            Button("Inspect and restore review…") { model.inspectPrevious(string(item["id"])) }
+                                .disabled(!model.connected || model.library.isEmpty || !model.processing.isEmpty || model.scanning || model.cleaning)
+                        }
+                    }
+                }
             }
             if let error { Text(error).foregroundStyle(.red) }
             HStack {
@@ -89,4 +121,8 @@ struct SettingsView: View {
             saving = false
         }
     }
+}
+
+private extension Dictionary where Key == String, Value == Any {
+    var previousWorkIdentity: String { string(self["id"]) }
 }

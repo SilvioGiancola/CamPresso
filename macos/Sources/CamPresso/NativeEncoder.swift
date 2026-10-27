@@ -228,7 +228,7 @@ enum NativeEncoder {
         group.enter()
         var videoFinished = false
         var lastProgress = 0.0
-        input.requestMediaDataWhenReady(on: DispatchQueue(label: "videoqueue.frames", qos: .userInitiated)) {
+        input.requestMediaDataWhenReady(on: DispatchQueue(label: "campresso.frames", qos: .userInitiated)) {
             if videoFinished { return }
             while input.isReadyForMoreMediaData {
                 if cancel.isCancelled || reader.status == .cancelled {
@@ -268,7 +268,7 @@ enum NativeEncoder {
         for (index, stream) in streams.enumerated() {
             group.enter()
             var finished = false
-            stream.1.requestMediaDataWhenReady(on: DispatchQueue(label: "videoqueue.stream.\(index)", qos: .userInitiated)) {
+            stream.1.requestMediaDataWhenReady(on: DispatchQueue(label: "campresso.stream.\(index)", qos: .userInitiated)) {
                 if finished { return }
                 while stream.1.isReadyForMoreMediaData {
                     if cancel.isCancelled || reader.status == .cancelled {
