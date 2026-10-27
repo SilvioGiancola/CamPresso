@@ -22,7 +22,11 @@ if ! command -v brew >/dev/null; then
   exit 1
 fi
 
-brew install python@3.13 python-tk@3.13 ffmpeg exiftool
+if ! xcrun --find swift >/dev/null 2>&1; then
+  echo 'Install Xcode 26 or later (including its Swift toolchain), then retry.' >&2
+  exit 1
+fi
+brew install python@3.13 ffmpeg exiftool
 PYTHON="$(brew --prefix python@3.13)/bin/python3.13"
 "$PYTHON" "$REPO_ROOT/scripts/install_macos.py"
 open "$HOME/Applications/Video Queue.app"

@@ -1,48 +1,49 @@
 # Video Queue
 
-**Compress → Review → Replace** videos in your Apple Photos library to reduce Photos and iCloud storage.
+A native **macOS 26+** app for reducing the size of videos in your personal Apple Photos library.
 
-Browse video thumbnails, download and compress selected originals, compare the results, then approve replacing them in Photos. The default is **1080p HEVC / Balanced**. Original downloads and conversion can run at the same time.
+**Select videos → Compress → Review → Keep Compressed or Revert**
+
+Browse a compact thumbnail gallery, compress local or iCloud videos, then compare the two versions with synchronized playback. The default is **Standard / 1080p HEVC**, using Apple's hardware encoder. The workflow follows [HEVCut's documented approach](https://hevcut.com/tools/video-compressor); HEVCut's performance has not been independently tested.
+
+## Get started
+
+1. Install [Homebrew](https://brew.sh/) and **Xcode 26+** with Swift 6.2+. Quit any running Video Queue instance.
+2. Double-click [Install.command](Install.command), or run `bash Install.command` from the checkout.
+3. Allow Photos access. In **Settings…**, select your **System Photo Library**, confirm it is a personal library without family Shared Photo Library configured, and read the import/review notice. The saved library opens automatically on future launches.
+4. Select videos and click **Compress**. Cloud videos download automatically; one download can run while another video converts.
+5. Open **Review**. Use the comparison divider, shared timeline and audio switch.
+6. Choose **Keep Compressed** to move the matching original to Recently Deleted, or **Revert** to remove the generated copy. Selected results can be decided as a batch.
+
+**Compression adds a verified smaller copy to Photos before review. Your original stays until you choose Keep Compressed.** Pending reviews survive closing the app. These changes synchronize through iCloud Photos when enabled.
 
 ## Documentation
 
 | Guide | Contents |
 | --- | --- |
-| [User guide](docs/USER_GUIDE.md) | Installation, permissions, everyday workflow, video statuses, quality settings, Photos Service, storage cleanup and troubleshooting. |
-| [Developer guide](docs/DEVELOPER_GUIDE.md) | Development setup, architecture, queues, internal interfaces, saved state, native journals, recovery, testing and release procedure. |
-| [Contributing](CONTRIBUTING.md) | Repository layout, code conventions and change/review workflow. |
-| [Changelog](CHANGELOG.md) | Unreleased changes and release history. |
+| [User guide](docs/USER_GUIDE.md) | Installation, permissions, settings, statuses, comparison, Photos Service, storage and recovery. |
+| [Developer guide](docs/DEVELOPER_GUIDE.md) | Swift/Python architecture, protocol, scheduling, transactions, migration and development builds. |
+| [Contributing](CONTRIBUTING.md) | Repository conventions and change workflow. |
+| [Verification checklist](docs/VERIFICATION.md) | Acceptance scenarios and current verification limits. |
+| [Changelog](CHANGELOG.md) | Changes and release history. |
 
-## Get started
+## Before you start
 
-1. Download or clone this repository on your Mac. Quit any running Video Queue instance.
-2. Install [Homebrew](https://brew.sh/) if needed, then double-click [Install.command](Install.command). From Terminal, you can run `bash Install.command` in the repository folder.
-3. Open **Settings…**, choose your **System Photo Library**, and click **Save**. The library loads now and automatically on future launches.
-4. Select videos and click **Compress**. Use **Play original** and **Play compressed** to review each result.
-5. Select the results you want to keep and click **Replace in Photos…**. A verified smaller copy is added before its original moves to Recently Deleted.
+- Supported dates, location, favorites, hidden status, filenames and writable regular albums carry over. Faces, edit history and some Photos metadata do not.
+- Supported HLG/HDR10 stays HDR. Unsupported media is skipped rather than silently downgraded. Dolby Vision dynamic metadata and editable Cinematic effects are not retained.
+- Savings mean **library size reduction**, not immediately reclaimed disk space. Recently Deleted normally retains removed items for 30 days; permanent deletion is manual. See [Apple's deletion guide](https://support.apple.com/en-lamr/104967).
+- Shared and uncertain cases are browse/play-only. The complete workflow requires the personal System Photo Library.
+- Local temporary files are released when safe. Photos manages its own downloads/cache; Video Queue never deletes files inside the Photos library.
 
-You can also select videos in Photos and choose **Photos → Services → Convert video to 1080p**. The Service stops at review; replacement requires your approval.
-
-## Before replacing videos
-
-- Compression alone leaves Photos unchanged. Replacement creates a new Photos asset and affects devices using iCloud Photos.
-- Dates, location, favorites, hidden status and writable regular albums are transferred. Faces, edit history and some other Photos metadata may not transfer.
-- **Done** confirms replacement in the local Photos library. It does not confirm iCloud synchronization or immediately reclaimed disk space. Permanent deletion from Recently Deleted remains manual.
-- Temporary videos are cleared on close after any required discard confirmation. Recovery copies for unresolved Photos operations are retained.
-- The app currently handles **SDR video**. HDR and anamorphic videos are skipped; output must be smaller to qualify for replacement.
-
-See the [user guide](docs/USER_GUIDE.md) for the full workflow, limitations and recovery steps. Source-level behavior and verification limitations are covered in the [developer guide](docs/DEVELOPER_GUIDE.md).
-
-## Repository layout
+## Repository
 
 ```text
-src/video_queue/   Application package and bundled Service resource
-tests/             Existing unit, integration and GUI checks
-scripts/           Installation and repository maintenance
-docs/              User and developer guides
-.github/workflows/ Automatic static checks
-pyproject.toml     Package metadata, dependencies and version
-Install.command    Double-click installer for macOS
+macos/             SwiftUI app, AVKit comparison, PhotoKit transactions, encoder
+src/video_queue/   Headless Python scheduler, catalog, persistence, legacy helpers
+scripts/           Native build, installer, Photos Service and static checks
+docs/              User, developer and verification guides
+tests/             Existing Python tests, including legacy GUI checks
+pyproject.toml     Python package metadata, dependencies and release version
 ```
 
-For development, install with `python -m pip install -e .` in a Python 3.13 environment, then launch with `python -m video_queue`. See the developer guide for an isolated app data directory and the existing test-suite limitations.
+This native implementation builds successfully, but its live Photos workflow and media acceptance scenarios have **not been executed**. Existing Python tests do not establish native app coverage. No tests or live Photos changes were performed for this implementation.

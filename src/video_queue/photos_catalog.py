@@ -25,6 +25,9 @@ class Media:
     thumbnail: str | None = None
     favorite: bool = False
     duration: float | None = None
+    shared_library: bool = False
+    shared_album: bool = False
+    fps: float | None = None
 
     @property
     def pixels(self):
@@ -57,7 +60,11 @@ def media_from_photo(photo):
                  path=str(path) if path else None, local=bool(path),
                  live=bool(photo.live_photo), edited=bool(photo.hasadjustments),thumbnail=thumbnail,
                  favorite=bool(getattr(photo,'favorite',False)),
-                 duration=video_duration(getattr(getattr(photo,'exif_info',None),'duration',None)))
+                 duration=video_duration(getattr(getattr(photo,'exif_info',None),'duration',None)),
+                 # Positive flags are warnings, not proof that false means personal.
+                 shared_library=bool(getattr(photo,'shared_library',False)),
+                 shared_album=bool(getattr(photo,'shared',False)),
+                 fps=video_duration(getattr(getattr(photo,'exif_info',None),'fps',None)))
 
 def video_duration(value):
     import math
@@ -81,7 +88,7 @@ def resolve_library(library):
     if len(candidates)>1:raise ValueError('Several Photos libraries were found. Enter the full path of one .photoslibrary folder:\n'+'\n'.join(str(p) for p in candidates))
     raise ValueError('Choose the .photoslibrary bundle itself, not the Pictures folder. No Photos libraries were found in '+str(path))
 
-def scan_library(library=None, progress=lambda *a:None, cancel=None, db_factory=None):
+def scan_library(library=None, progress=lambda *a:None, cancel=None, db_factory=None, videos_only=False):
     cancel=cancel or threading.Event()
     if db_factory is None:
         try:import osxphotos
@@ -91,7 +98,7 @@ def scan_library(library=None, progress=lambda *a:None, cancel=None, db_factory=
     if cancel.is_set():raise ScanCancelled()
     db=db_factory(str(Path(library).expanduser()) if library else None)
     if cancel.is_set():raise ScanCancelled()
-    rows=[]; photos=db.photos(images=True, movies=True, intrash=False)
+    rows=[]; photos=db.photos(images=not videos_only, movies=True, intrash=False)
     total=len(photos)
     for index,photo in enumerate(photos,1):
         if cancel.is_set():raise ScanCancelled()

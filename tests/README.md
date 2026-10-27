@@ -18,10 +18,12 @@ python -m unittest discover -s tests -t . -v
 | `test_download`, `test_previews` | Simulated Photos downloads; some checks use real FFmpeg/ffprobe. |
 | `test_engine`, `test_tracks`, `test_cover` | FFmpeg/ffprobe fixtures and conversion. |
 | `test_metadata_integration` | FFmpeg/ffprobe/ExifTool round trips; skipped if tools are absent. |
-| `test_gui` | macOS graphical session and TkinterDnD; contains legacy UI expectations. |
+| `test_gui` | macOS graphical session and TkinterDnD; contains legacy UI expectations; not native app coverage. |
 
 ## Known limitations
 
 `test_gui.py` still references removed UI members such as `App.folder` and `remove_menu`; it needs a separate migration to the current workflow. Its startup also needs isolation from automatic library discovery/scanning before it is suitable for unattended execution. A separate `App(data=...)` directory does not isolate Photos. Do not treat the current GUI suite as a safe, passing acceptance run.
+
+The native macOS 26 frontend, bridge, encoder, migration and comparison player currently have no executed acceptance coverage. Tests were not added or run for the native implementation. See the [native verification checklist](../docs/VERIFICATION.md) before an explicitly requested run. Install the `legacy` Python extra and Homebrew `python-tk@3.13` if deliberately running the old GUI suite.
 
 The GitHub Actions workflow runs only syntax, package-reference, documentation-link and whitespace checks. A passing workflow is not a passing test suite or a verified Photos replacement. Live Photos checks need separate approval and a disposable test System Photo Library.

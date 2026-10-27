@@ -20,4 +20,7 @@ class StateFile:
                 json.dump(data,output,indent=2,allow_nan=False)
                 output.flush();os.fsync(output.fileno())
             os.replace(name,self.path)
+            directory=os.open(self.path.parent,os.O_RDONLY)
+            try:os.fsync(directory)
+            finally:os.close(directory)
         finally:Path(name).unlink(missing_ok=True)

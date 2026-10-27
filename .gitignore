@@ -31,3 +31,9 @@ htmlcov/
 *.mp4
 *.mov
 *.m4v
+
+# Native Swift build products
+.build/
+.swiftpm/
+DerivedData/
+*.app/

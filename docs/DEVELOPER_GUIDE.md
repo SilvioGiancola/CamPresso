@@ -1,281 +1,174 @@
 # Developer guide
 
-[Back to README](../README.md) · [User guide](USER_GUIDE.md)
+[README](../README.md) · [User guide](USER_GUIDE.md) · [Verification](VERIFICATION.md)
 
-This guide describes the current desktop app and its internal contracts. The user-facing flow is **Compress → Review → Replace**. Existing lower-level helpers also retain older external-file, import-only and version-removal operations; those are not the current GUI workflow.
+## Requirements and builds
 
-## Contents
-
-- [Development environment](#development-environment)
-- [Architecture and source map](#architecture-and-source-map)
-- [Queues and thread ownership](#queues-and-thread-ownership)
-- [Conversion and replacement contracts](#conversion-and-replacement-contracts)
-- [Persistence, migration and recovery](#persistence-migration-and-recovery)
-- [Storage ownership and cleanup](#storage-ownership-and-cleanup)
-- [Photos Service and helper protocols](#photos-service-and-helper-protocols)
-- [Testing and current coverage](#testing-and-current-coverage)
-- [Debugging and releasing changes](#debugging-and-releasing-changes)
-
-## Development environment
-
-The production installer uses Homebrew **Python 3.13**, the corresponding Tk package, FFmpeg/ffprobe and ExifTool. [pyproject.toml](../pyproject.toml) defines the package version, dependencies, console entry point and bundled AppleScript. Python dependencies remain `tkinterdnd2==0.6.3`, `osxphotos==0.77.2` and `pyobjc-framework-Photos` on macOS. PyObjC and Homebrew tools are not pinned to exact versions; there is no complete dependency lockfile or declared minimum macOS version.
-
-From the repository root, create a development environment separate from the installed runtime:
+The application targets **macOS 26+**, **Swift 6.2+** and Python **3.13**. Install Xcode 26+ and select its developer directory. The native executable is a Swift package without external Swift dependencies. Python uses `osxphotos==0.77.2` for the read-only catalog; FFmpeg/ffprobe perform independent output validation. The retained Python conversion engine also expects ExifTool.
 
 ```bash
-brew install python@3.13 python-tk@3.13 ffmpeg exiftool
-"$(brew --prefix python@3.13)/bin/python3.13" -m venv "$HOME/.venvs/videoqueue-dev"
-source "$HOME/.venvs/videoqueue-dev/bin/activate"
+brew install python@3.13 ffmpeg exiftool
+"$(brew --prefix python@3.13)/bin/python3.13" -m venv .venv
+source .venv/bin/activate
 python -m pip install -e .
-```
 
-For UI development with separate application files:
+# Build an ad hoc signed bundle; does not install/launch it or access Photos.
+python scripts/build_macos.py 'dist/Video Queue.app'
 
-```bash
-VQ_DEV_DATA="$(mktemp -d "${TMPDIR:-/tmp}/videoqueue-dev.XXXXXX")"
-python -m video_queue --data-dir "$VQ_DEV_DATA"
-```
-
-`App(data=...)` isolates preferences, working files, workflow records and journals. **It does not isolate the Photos library:** native helpers still access the selected System Photo Library. Opening the GUI is not a read-only operation on the chosen data directory; startup/closing run cache cleanup and save state.
-
-Running `python -m video_queue` or `video-queue` without `--data-dir` uses the normal `~/Library/Application Support/Video Queue` data directory. Its storage lock prevents another instance from owning that same directory. Run the package after installing it; individual source files are not standalone launchers. The macOS Service always queues into the installed app's normal data directory and opens its app bundle; it does not target an isolated development instance.
-
-### Repository layout
-
-```text
-MacVideoLibraryConverter/
-├── src/video_queue/       # Runtime package and native Photos helpers
-│   └── resources/        # Bundled Photos Service AppleScript
-├── tests/                # Existing unittest modules
-├── scripts/              # Installation and repository checks
-├── docs/                 # User and developer guides
-├── .github/workflows/    # Automatic static checks
-├── pyproject.toml        # Package metadata, dependencies and version
-├── Install.command       # Finder-friendly installer entry point
-├── CONTRIBUTING.md       # Change and review workflow
-└── CHANGELOG.md          # User-visible changes
-```
-
-Keep runtime code in `src/video_queue`, with relative imports within the package. Tests use `video_queue.*` imports and patch targets. Tests are not shipped as runtime modules. Small modules remain grouped in one package; further subpackages can be introduced when a cohesive area grows enough to justify them. See [Contributing](../CONTRIBUTING.md) before making changes.
-
-## Architecture and source map
-
-```mermaid
-flowchart LR
-    Catalog[OSXPhotos catalog] --> App[App controller]
-    Service[Photos Service selection] --> Requests[Request files]
-    Requests --> App
-    App --> Downloads[Original download queue]
-    Downloads --> Conversion[Conversion queue]
-    Conversion --> Review[Review in GUI]
-    Review -->|Explicit approval| Replacement[Sequential Photos replacement]
-    Replacement --> Journal[Native journal and recorded asset IDs]
-```
-
-| Area | Sources | Responsibilities |
-| --- | --- | --- |
-| Controller and workflow | [app.py](../src/video_queue/app.py), [workflow_logic.py](../src/video_queue/workflow_logic.py) | UI actions, job records, eligibility, approval snapshots, replacement queue, displayed statuses, migration and shutdown. |
-| Catalog and UI | [photos_catalog.py](../src/video_queue/photos_catalog.py), [photos_browser.py](../src/video_queue/photos_browser.py), [photos_gallery.py](../src/video_queue/photos_gallery.py) | Read-only OSXPhotos scanning, filtering, sorting, paged selection, thumbnails and original download queue. |
-| Local previews | [photos_previews.py](../src/video_queue/photos_previews.py) | Per-library/asset cache manifests, validated original previews, poster generation. |
-| Downloads | [photos_download.py](../src/video_queue/photos_download.py), [photos_resource.py](../src/video_queue/photos_resource.py) | Independent local copies, original-resource downloads, validation, progress and cancellation. |
-| Conversion | [engine.py](../src/video_queue/engine.py), [quicktime_tracks.py](../src/video_queue/quicktime_tracks.py) | FFmpeg/ExifTool execution, output checks, QuickTime movie/track date preservation and remapping. |
-| Job/native orchestration | [jobs.py](../src/video_queue/jobs.py), [photos_actions.py](../src/video_queue/photos_actions.py) | Conversion preparation, reviewed replacement, PhotoKit access, exact-asset checks and durable intent journals. |
-| Photos integration | [photos_service.py](../src/video_queue/photos_service.py), [photos_service.applescript](../src/video_queue/resources/photos_service.applescript), [photos_navigation.py](../src/video_queue/photos_navigation.py) | Service requests, library resolution, selection IDs and Show in Photos. |
-| Persistence and deployment | [state_store.py](../src/video_queue/state_store.py), [storage_cleanup.py](../src/video_queue/storage_cleanup.py), [install_photos_service.py](../scripts/install_photos_service.py), [Install.command](../Install.command) | Atomic JSON, storage lock/cleanup, Automator bundle generation and app/runtime installation. |
-
-The catalog uses public OSXPhotos query APIs. Native reads/writes use PhotoKit through PyObjC in subprocesses. Navigation and selection use Photos' scripting interface. No component should directly edit the Photos SQLite database or in-library media files.
-
-## Queues and thread ownership
-
-Tk widgets and `PhotoImage` objects belong to the GUI thread. Workers return events through `queue.Queue`; GUI polling uses `after` callbacks. A thumbnail executor has two workers, and generation IDs discard stale thumbnail results after a catalog/view change.
-
-`App.configure_menu` attaches an explicit menu bar so Tk's default demonstration commands are not exposed. On macOS it creates the special `.apple`, `.window` and `.help` menus before attaching the bar, overrides `tkAboutDialog` and `tk::mac::ShowHelp`, and routes Settings/Quit through the app handlers. Preserve the Quit/Close connection to cleanup. The native menu conventions are described in [Tk's macOS documentation](https://github.com/tcltk/tk/blob/main/macosx/README).
-
-`App.show_settings` creates or focuses one separate `Toplevel` with draft library and conversion values. The Conversion settings section holds codec, resolution, quality and file format; configuration is kept in this window. Save validates a changed library and atomically persists preferences before applying them; Cancel/window close discard drafts. Conversion defaults can change during processing because queued jobs retain snapshots. Library changes and catalog refresh are blocked while work is active or queued, including paused conversions. Switching libraries clears the previous catalog before loading the new one.
-
-After initialization, an idle callback starts the asynchronous catalog scan automatically. A saved nonempty path always wins; without one, discovery tries the System library then the last-opened library. Startup failures appear in the main status without a modal dialog or fallback to another library. Refresh retries the selected path. Loading the catalog does not download originals or authorize native Photos writes. `PhotosBrowser.catalog_loaded` distinguishes a successful empty catalog from an unloaded one.
-
-The queues have distinct responsibilities:
-
-- `PhotosBrowser` downloads one original at a time, keyed by library path and asset UUID. Duplicate consumers share callbacks and a download. `PreviewStore` validates the local copy before publishing its manifest.
-- `App.compress_media` records settings, registers download callbacks, then feeds downloaded originals into `App.convert_media`. One conversion runs at a time. The original download queue can overlap it.
-- A compression generation counter prevents callbacks from starting conversions after Stop. Pause finishes the current encode, then holds queued conversions. Ordinary conversion/download failures allow other successful jobs to continue.
-- Approved replacements run sequentially after current download/conversion work is idle. An uncertain Photos write pauses replacement processing and clears remaining approvals.
-- Closing asks Yes/No, cancels queued/cancellable work, waits for tracked media worker threads and terminal events, then joins thumbnail workers before cleanup. Cancelled read-only catalog/selection queries may finish as daemon threads; they only publish queue events. An in-flight Photos write is allowed to finish; do not kill that helper to implement cancellation.
-
-Local compressed playback can run during encoding. Library changes, native replacement and retrieval of a compressed Photos copy are gated on idle work. `active`, browser `busy/task`, and the per-job `operation` describe different parts of this coordination; do not treat any one flag as the entire workflow state.
-
-Worker startup goes through `App.start_worker` or `PhotosBrowser.start_worker`. Shutdown checks actual thread lifetimes instead of trusting UI busy flags. Both polling loops reschedule in `finally`, continue draining terminal events during close, and suppress gallery redraws while closing. Conversion stop is an event signal; process termination/reaping stays on its worker thread. Download ffprobe validation checks the same cancellation event and terminates its child on cancellation. Cleanup errors are logged rather than opening another modal dialog that blocks an already confirmed close.
-
-## Conversion and replacement contracts
-
-### Main entry points
-
-| Entry point | Contract |
-| --- | --- |
-| `App.compress_media(media, library, settings_override=None)` | Validate the System Photo Library, capture settings, queue original preparation and feed conversions. Does not authorize Photos replacement. |
-| `Converter.convert(source, settings, report)` | Convert an independent local source and return `(output_path, detail)`. `report(stage, percent)` reports processing stages. Raises `Cancelled`, `Skipped` or a processing error. |
-| `JobRunner.run(job, settings, report)` | Prepare/reuse the working original and record output expectations/fingerprints. The current GUI supplies `import=False`, `remove=False`, `replace=False`. |
-| `App.replace_selected()` | Check every selected result, obtain one batch confirmation and save an approval snapshot per job. |
-| `JobRunner.replace_reviewed(job, report)` | Validate approval and files, obtain an independent original if necessary, then publish with removal enabled. |
-| `JobRunner.actions(request)` | Invoke the native helper with JSON stdin, validate its final JSON result and propagate `JobFailure` recovery metadata. |
-
-Core settings are `codec` (`HEVC`/`H.264`), `size` (`720`/`1080`/`2160`), `quality` (`High`/`Balanced`/`Small`), `container` (`MP4`/`MOV`), `folder`, `replace` and `require_smaller`. The GUI uses a per-job folder under `Workflow/Converted`, `replace=False` and `require_smaller=True`. The engine's older in-place external-file replacement mode is separate from replacing a Photos asset.
-
-The converter selects the first non-artwork video stream and all audio streams. It bounds the long/short sides without upscaling, uses software x265/x264 encoding, emits 8-bit `yuv420p`, and encodes audio to AAC at 192 kbit/s. HEVC is tagged `hvc1`. Extra video tracks, subtitle/data streams and proprietary telemetry are not retained. HDR/PQ/HLG and anamorphic inputs are skipped.
-
-Before publishing output, conversion checks supported metadata, duration, audio stream count, complete video/audio decoding and source identity. Duration tolerance is `max(0.5 seconds, 0.5% of source duration)`. QuickTime date handling maps retained input tracks to output tracks; attached artwork must not be mistaken for a retained movie track. Unique output naming avoids overwriting an existing file.
-
-### Approval and native ordering
-
-A reviewable result needs a Photos source, known expected video properties, unchanged local output, a measured reduction, an original not already removed, and a retry-safe state.
-
-The approval snapshot records `output`, `fingerprint`, `expected`, `original_uuid` and the current `new_uuid`. A fingerprint is **`[size_bytes, mtime_ns]`**, not a content hash. Expected video properties are `{duration, width, height}`, with finite positive duration and positive integer dimensions. Changing the approved file or identifiers invalidates approval.
-
-Replacement ordering must remain:
-
-1. Require the selected System Photo Library and full Photos access.
-2. Validate the reviewed output and independent original working copy. A stale/changed backup is fetched again from the exact Photos asset.
-3. Confirm that the output is smaller and that original dimensions/duration match the expected original.
-4. Journal import intent, create the new Photos asset, and record its placeholder ID before commit finishes. If a converted asset ID is already recorded, verify and reuse that asset instead.
-5. Verify the imported asset's media type, dimensions and duration.
-6. Recheck local fingerprints, journal removal intent, then remove exactly the original asset.
-7. Record completion and update workflow state.
-
-Import transfers creation date, location, favorite/hidden flags and writable regular-album membership while the original is present. Other Photos-specific metadata is outside that guarantee. A verified PhotoKit asset confirms local library presence, not iCloud synchronization.
-
-Native callbacks declared `void` must return `None`. Use wrappers that discard native/Python body return values and catch Python exceptions; a tuple-returning lambda can terminate the helper through `OC_PythonException`. Import `get_system_library_path` and `get_last_library_path` from **`osxphotos.utils`**, not the top-level package.
-
-## Persistence, migration and recovery
-
-All normal app state is under `~/Library/Application Support/Video Queue/`:
-
-| File | Purpose |
-| --- | --- |
-| `preferences.json` | Remembered `library` path, validated `compression` defaults (`codec`, `size`, `quality`, `container`) and preserved preference data. Missing/invalid compression values use defaults. |
-| `workflow.json` | Version 3 object with a `jobs` array. |
-| `.app.lock` | `fcntl.flock` lock held by the single owner of this data directory. |
-| `Photos work/journals/*.json` | Native operation intent, identifiers, fingerprints and outcome. |
-| `Requests/` | Photos Service handoff files. |
-| `conversion.log`, `launch.log` | Processing diagnostics and installed-launcher output. |
-
-`StateFile.write` uses a temporary sibling, flush/fsync and `os.replace`. Non-object/unreadable JSON reads yield `{}`. Native journal writes use the same atomic publication approach. Do not replace these with in-place truncation.
-
-Important job fields are grouped below; these are internal dictionaries rather than a stable external API:
-
-| Fields | Meaning |
-| --- | --- |
-| `id`, `media`, `library`, `path` | Internal job ID, serialized `Media`, library identity and legacy external input path. |
-| `state`, `phase`, `progress`, `operation`, `detail` | Processing state, derived display label, progress, current action and diagnostics. `phase` alone is not proof of a native outcome. |
-| `source_size`, `result_size`, `expected` | Measured original/result sizes and verified output properties. |
-| `output`, `output_fingerprint`, `backup`, `backup_fingerprint` | Recorded generated output and independent original working copy. |
-| `new_uuid`, `last_new_uuid`, `uploaded_ids` | Current and historical converted Photos identifiers. The original ID remains in `media.uuid`. |
-| `converted`, `verified`, `original_removed`, `converted_removed`, `replacement_complete` | Separate conversion and Photos outcome flags. |
-| `retry_safe`, `review_operation`, `journal`, `replacement_approval` | Retry/reconciliation and approval information. |
-| `queued_settings`, `conversion_settings`, `compression_pending` | Captured settings and download-to-conversion coordination. |
-| `archived`, `previous_conversions`, `retained_outputs`, `cleanup_retained` | Historical results and protected local files. |
-
-`Media` includes UUID, filename, kind, size/dimensions, date, local path/availability, Live Photo and edit flags, thumbnail, favorite and optional duration. Duration comes from OSXPhotos' `exif_info.duration`. App identity comparisons normalize UUID prefixes before `/` and resolve library paths; PhotoKit identifiers can include a suffix such as `/L0/001`.
-
-Loading preserves legacy identifiers/history and fills newer defaults, including sizes and optional Media fields. Pending downloads/conversions are not automatically resumed. Queued replacement approvals are cleared. Interrupted native operations require inspection or a validated completed receipt.
-
-Key journal phases include `Import pending`, `Imported`, `Import verified`, `Removal pending`, `Original moved to Recently Deleted` and `Photos inspected`. A placeholder ID or pending phase is not proof of success. `App.recover_receipt` checks the recorded library/source/output relationship and only automatically reads journals under the current `Photos work/journals` directory. Older journals elsewhere remain useful evidence but are not universally replayed.
-
-When a native result is ambiguous, keep `retry_safe=False`, retain recovery files and inspect exact recorded IDs. An unknown imported asset ID cannot be resolved by filename matching. Never automatically repeat an uncertain import/removal or infer retry safety by searching an exception's message text. `JobFailure` carries `output`, `journal` and `retry_safe` explicitly.
-
-## Storage ownership and cleanup
-
-`clean_storage(data, jobs, delete_unsent=False)` runs at startup and after workers stop on close. Startup protects recorded unreviewed results. Close uses `delete_unsent=True` after the required discard confirmation.
-
-Cleanup handles `Previews`, `Thumbnails`, `Converted previews`, `Workflow`, current working-original directories and tracked legacy working-original directories. Successful replacements no longer require a permanent local original backup. Unresolved Photos operations and originals removed without a verified replacement keep available recovery copies.
-
-Preserve these invariants when changing cleanup:
-
-- No external inputs or files inside `.photoslibrary` bundles are deleted.
-- Unlink a recorded generated output only if its stored size/mtime still matches; preserve changed outputs, recorded `retained_outputs` and unsafe paths/symlinks.
-- Do not clear files needed by a running worker or unresolved transaction.
-- Preserve workflow/preferences, asset IDs, logs and journals; clearing media bytes must not lose the relationship between original and replacement.
-- A `Done` entry remains grouped after its local files are cleared, and playback can retrieve the recorded Photos copy.
-
-Free-space checks reserve an additional 256 MiB: local copying requires space for the source; a cloud download with known size requires twice that size for staging/publication; encoding requires at least the original size available for output. These are preflight checks, not reservations across concurrent workers. Later disk exhaustion remains an error path that must keep Photos originals intact.
-
-## Photos Service and helper protocols
-
-### Service handoff
-
-`scripts/install_photos_service.py` builds an Automator `.workflow` containing a Run AppleScript action; it does not execute that workflow. It reads the bundled AppleScript through `importlib.resources`. The installer then registers Services using `/System/Library/CoreServices/pbs -update`. Keep the native action serialization key **`Class Name`** and Photos-only service metadata intact.
-
-The AppleScript resolves each selection loop reference with `contents of chosenItem`, gets the media item's `id`, then converts that value to text. Coercing an unresolved “id of item of selection” reference causes the historical Photos selection error. Shell arguments are individually quoted.
-
-The AppleScript calls the installed interpreter with `-m video_queue.photos_service`. This enqueue entry point validates and deduplicates 1–500 UUIDs, writes `Requests/<32-hex-id>.json`, and opens the installed app. The request has version `1`, action `convert1080`, an optional library string (normally `null`) and a `uuids` array of canonical GUID strings. The consumer rejects oversized requests (over 128 KiB), unexpected filenames and symlinks. The request protocol remains compatible with earlier flat-file installations.
-
-Library discovery runs in the app, not the Automator runner: explicit/preferred/saved paths, Photos' last-opened and System library paths, then libraries under Pictures. A candidate must contain every exact selected ID. Still pictures are ignored after matching the selection; the compression entry point enforces the System library requirement.
-
-Requests become `.running` during preparation. Successful handoff to the compression workflow removes the request file; that acknowledgment does **not** mean conversion/replacement finished. Failed requests become `.failed`, and interrupted `.running` files become `.interrupted` on restart. Neither is automatically replayed. The Service never sets replacement approval.
-
-### Native subprocesses
-
-- `python -m video_queue.photos_actions` accepts one JSON request on stdin. It returns a final JSON object on stdout; errors include journal information. Supported internal actions are `check`, `finish`, `remove`, `verify`, `inspect`, `delete_original` and `delete_converted`. The GUI reaches these through job/controller methods rather than treating the helper as a user CLI.
-- `python -m video_queue.photos_resource` accepts asset UUID, library and destination. It streams JSON `progress` packets with `percent`, then `complete` or `error`. It requests the original `PHAssetResourceTypeVideo` with network access allowed. Both helpers run with the app's interpreter so they resolve the same installed package.
-- `fetch_video` uses independent local copying when an original is available. For missing originals its default path uses the PhotoKit resource helper; the injected runner/CLI path supports OSXPhotos export and simulated tests. Staging, validation and unique publication happen outside Photos.
-- `show_in_photos` validates identifiers, supplies `/L0/001` for a plain GUID, then uses Photos' `spotlight` AppleScript command. It does not switch the open/System library.
-
-## Testing and current coverage
-
-The repository keeps its existing Python `unittest` suite under `tests/`. Install the development package first. The following commands are manual options; documentation updates do not imply that these checks were run or passed. [tests/README.md](../tests/README.md) lists requirements and known limitations.
-
-```bash
-# Mocked core contracts and catalog behavior.
-python -m unittest -v tests.test_actions tests.test_bridge tests.test_catalog tests.test_jobs
-
-# Existing complete suite; requires the development environment and tools.
-python -m unittest discover -s tests -t . -v
-```
-
-| Existing modules | Main coverage / requirements |
-| --- | --- |
-| `test_actions`, `test_bridge`, `test_jobs` | Simulated native transactions, callback return contracts, orchestration and failure metadata. |
-| `test_catalog` | Catalog queries, filtering, sorting and independent copying with temporary files. |
-| `test_download`, `test_previews` | Simulated cloud orchestration, preview ownership and cancellation; several cases invoke real FFmpeg/ffprobe. |
-| `test_engine`, `test_tracks`, `test_cover` | Real FFmpeg fixtures, cancellation, stream handling and QuickTime metadata remapping. Some ExifTool behavior is mocked. |
-| `test_metadata_integration` | Real FFmpeg/ffprobe/ExifTool round trips; skipped when tools are missing. |
-| `test_gui` | A real Tk session with temporary app data and simulated Photos behavior. Needs a graphical environment and tkinterdnd2. |
-
-**Current coverage limitation:** `test_gui.py` still references removed UI members such as `App.folder` and `remove_menu`. Those tests need migration to the current interface. There is no recorded passing full-suite result for the Compress → Review → Replace refactor in these docs, and the existing suite is not proof of the complete current workflow.
-
-When extending coverage, include cloud download/conversion overlap, approval invalidation, sequential batch replacement, no-reduction/HDR skips, migration, close/discard/cancel, disk exhaustion and interrupted native transactions. Test uncertain import/removal outcomes using injected adapters before attempting live Photos operations.
-
-For an explicitly authorized live acceptance check, use disposable videos in a test **System Photo Library**. A separate `App(data=...)` directory alone does not isolate Photos. Check metadata, exact original/replacement IDs, playback, Recently Deleted and reopening/cleanup. Report mock, tool integration, GUI and live-library results separately; do not claim iCloud synchronization from a successful local import.
-
-## Debugging and releasing changes
-
-Start with **Video details → Copy details**, `conversion.log` and the job's journal. `launch.log` captures installed-launcher output, including startup failures. Inspect `retry_safe`, native phase and IDs before deciding whether a retry is appropriate. Redact personal paths/identifiers when publishing reports.
-
-For static inspection without importing runtime modules, running tests or starting the app:
-
-```bash
+# Source-level checks; no application imports or test execution.
 python scripts/check_repository.py
 git diff --check
 ```
 
-The GitHub Actions **Repository checks** workflow runs these static checks on pushes and pull requests using Python 3.13. It does not install the app, run the test suite or access Photos. These checks do not establish that GUI behavior or installation works. The workflow uses the official [checkout](https://github.com/actions/checkout) and [setup-python](https://github.com/actions/setup-python) actions.
+The build command requires a new destination, builds Release without debug symbols into a temporary directory, embeds the bundle metadata/permission descriptions and signs the result. In an already sandboxed build host that cannot nest SwiftPM’s compiler sandbox, its explicit `--disable-swift-sandbox` option disables only that nested build sandbox. It builds for the host architecture. It does not create a notarized universal distribution. `macos/Package.swift` selects Swift 5 language mode on the Swift 6 toolchain; adopting full Swift 6 strict concurrency is future work. Some synchronous AVFoundation accessors remain deprecated but are used off the UI thread.
 
-To build a wheel without installing the application or running tests:
+For incremental frontend development:
 
 ```bash
-python -m pip wheel --no-deps --wheel-dir dist .
+xcrun swift build --package-path macos -c debug
+# Use the path returned by this command rather than assuming SwiftPM's layout:
+xcrun swift build --package-path macos -c debug --show-bin-path
 ```
 
-Build dependencies may be downloaded into an isolated build environment. `dist/`, build output and package metadata caches are ignored by Git. The wheel contains `video_queue` and its bundled AppleScript; installer scripts, documentation and existing tests are also included in source distributions through `MANIFEST.in`.
+Launch only when an interactive session is intended:
 
-Release procedure:
+```bash
+python -m video_queue --native-app 'dist/Video Queue.app' \
+  --data-dir "$PWD/.local/dev-data" --backend-python "$PWD/.venv/bin/python"
+```
 
-1. Review changes against the native ordering and cleanup invariants above. Keep user-facing labels, statuses and both guides aligned with the implementation.
-2. Add runtime modules under `src/video_queue`; package discovery includes them automatically. Declare non-Python assets in `pyproject.toml` package data. Change the version there when releasing; the installer reads the bundle version from that file.
-3. Record the checks performed, their results, current coverage limitations and whether any live Photos work was performed. Resolve or explicitly account for legacy test expectations before claiming a passing release suite.
-4. Quit the installed app before running `bash Install.command`. The root script delegates to `scripts/install.sh` and `scripts/install_macos.py`. They install Homebrew tools, build the package from a temporary source copy, install it into the app's venv, rebuild/register the Service, write the launcher/Info.plist and open the app. Building outside the checkout keeps generated packaging files out of the repository folders. The Python installer holds the shared `.app.lock` while updating and refuses to proceed if the GUI owns it. It is not a read-only development command.
-5. Reopen the app after source updates. Compare the installed launcher/runtime with the intended source revision when diagnosing an old UI or stale helper.
-6. Preserve user workflow/recovery data across updates. Compatibility is forward migration; an older app is not guaranteed to understand a newer saved workflow.
-7. Review the Git diff, commit the intended files and push through the repository's chosen branch workflow. Do not publish local environments, media, logs or personal workflow records.
+`--native-app` accepts a bundle or Mach-O executable. The launcher rejects old shell/Python bundle launchers to prevent recursion. `--backend-python` selects the interpreter for `python -m video_queue.backend --stdio`. Installed Finder launches default to the shared application's venv.
 
-The standard installer launches the installed package with `venv/bin/python -m video_queue`. Existing installations may still point at a flat `app.py` or `Versions/<version>/app.py`; inspect the launcher when diagnosing stale code. Updating via the reorganized repository changes the launcher to the package entry point and preserves shared preferences, workflow, requests, recovery files and journals. Older source copies are left untouched. Service enqueue still uses the installed data directory and app bundle.
+**An isolated data directory does not isolate Photos.** Native PhotoKit operations still target the user's System Photo Library. Launching can migrate/save data and clear safe temporary files. Do not launch the app as an unattended verification step against a personal library.
+
+## Architecture
+
+```mermaid
+flowchart LR
+    UI[SwiftUI gallery and Settings] <-->|NDJSON protocol 1| Backend[Python workflow scheduler]
+    Service[Photos Service] --> Requests[Request files]
+    Requests --> Backend
+    Catalog[OSXPhotos read-only catalog] --> Backend
+    Backend <-->|requests, progress, outcomes| Native[Swift PhotoKit and AVFoundation]
+    Native --> Encoder[Hardware HEVC encoder]
+    Native --> Photos[Personal System Photo Library]
+    Native --> Journals[Native transaction journals]
+    Backend --> Records[Workflow version 4]
+    UI --> Review[AVKit synchronized comparison]
+```
+
+| Sources | Responsibility |
+| --- | --- |
+| [VideoQueueApp.swift](../macos/Sources/VideoQueue/VideoQueueApp.swift), [LibraryView.swift](../macos/Sources/VideoQueue/LibraryView.swift), [SettingsView.swift](../macos/Sources/VideoQueue/SettingsView.swift) | Native windows, menus, compact gallery, filtering, selection, preferences and quit routing. |
+| [AppModel.swift](../macos/Sources/VideoQueue/AppModel.swift) | Python process lifetime, asynchronous protocol, UI state, explicit decision confirmation and graceful shutdown. |
+| [ReviewView.swift](../macos/Sources/VideoQueue/ReviewView.swift) | Two AVPlayers, timed synchronized start, shared timeline, drift correction, divider/zoom and audio selection. |
+| [PhotosOperations.swift](../macos/Sources/VideoQueue/PhotosOperations.swift), [Support.swift](../macos/Sources/VideoQueue/Support.swift) | PhotoKit reads/writes, exact identifiers, version snapshots, native gate, journals, media ownership and permissions. |
+| [NativeEncoder.swift](../macos/Sources/VideoQueue/NativeEncoder.swift) | Current rendition, hardware encoding, HDR, composition, audio and native output checks. |
+| [backend.py](../src/video_queue/backend.py) | Headless scheduling, workflow mutations, catalog, frontend snapshots, Service handoff and recovery policy. |
+| [native_store.py](../src/video_queue/native_store.py), [native_validation.py](../src/video_queue/native_validation.py) | Strict persisted records/migration, hashes and independent FFmpeg checks. |
+| [photos_catalog.py](../src/video_queue/photos_catalog.py) | Read-only OSXPhotos queries, original resource size, favorites and positive shared flags. |
+| [legacy_app.py](../src/video_queue/legacy_app.py), older Photos/conversion helpers | Retained legacy compatibility and recovery contracts; not the production frontend or native write path. |
+
+`app.py` is now a lightweight native launcher. Its lazy historical `App` import resolves to `legacy_app.App` for old helper/test imports; normal startup does not import Tk. Install the optional `legacy` extra and Homebrew `python-tk@3.13` only if deliberately working on that old code. The old controller refuses workflow version 4 before creating a GUI or cleaning files.
+
+## Protocol 1
+
+The private transport is newline-delimited UTF-8 JSON over the child process's stdin/stdout. Every packet includes `protocol: 1`. Stdout is reserved for packets; diagnostics go to files/stderr. File paths are JSON strings, never shell interpolations. Catalog/job records contain paths and Photos identifiers: do not publish unredacted logs.
+
+| Packet | Required fields |
+| --- | --- |
+| Frontend request | `type: request`, unique `id`, `method`, `params` object |
+| Backend reply | `type: reply`, matching `id`, `result` or `error.message` |
+| Backend event | `type: event`, `event`, payload; snapshot/job events include a revision |
+| Native operation request | `type: native.request`, unique `id`, `method`, `params` |
+| Native progress | `type: native.progress`, matching `id`, `stage`, nullable `percent` |
+| Native outcome | `type: native.reply`, matching `id`, `result` or `error` with `message`, `code`, `uncertain` |
+
+Frontend commands include `initialize`, `catalog.refresh`, `preferences.update`, `jobs.enqueue/pause/resume/stop`, `review.open/batch/decide`, `recovery.inspect`, `legacy.import`, `photos.show` and `shutdown`. Native methods are `prepare`, `encode`, `import`, `review`, `decide`, `inspect` and `cancel`.
+
+Requests/replies are correlated independently; progress is asynchronous. The backend reader routes native replies directly to waiting workers rather than blocking behind commands. Workflow mutation uses an RLock; one backend owns each data directory via `.app.lock`. The UI owns its published state on the main actor. Media encoding runs on worker queues, with cancel checks, a stall watchdog and frame autorelease pools.
+
+`Transport.native` has a 30-minute response timeout. A timed-out Photos write is uncertain and blocks additional writes. The native gate remains authoritative even after a caller times out. Protocol version mismatches fail visibly; do not silently guess a packet shape.
+
+## Scheduling and workflow
+
+Three lanes coordinate one preparation, one encoder and one Photos transaction. A prepared original may wait one ahead of the encoder. Awaiting-import work applies backpressure so offline Photos writes do not grow a local output backlog. Downloads and encoding may continue while the independent Photos lane commits. Failed cloud videos remain retryable; they do not abort local items.
+
+Main stages:
+
+```text
+Ready → Queued → Downloading → Prepared → Converting → Verifying
+      → Awaiting save → Saving to Photos → Ready to review
+      → Applying decision → Completed
+```
+
+`Prepared` appears as Queued with a downloaded/waiting detail; `Awaiting save` appears as Saving to Photos. Exceptional states are Paused, Cancelled, Waiting for connection, Waiting for space, Skipped, Error, Needs attention and migrated Awaiting import. Progress events are throttled and do not fsync every frame. Durable stage transitions are saved before dependent work is started.
+
+Pause stops new read/encode scheduling, allowing current operations and verified imports to finish. Stop cancels reads/encoding and queued decisions but never interrupts an active Photos write. Quit confirms active work, requests shutdown, waits for native transactions and clears safe working media. Backend loss cancels native reads/encoding; the native host waits for an active Photos transaction rather than killing it.
+
+## Media contract
+
+Preparation requests `PHVideoRequestOptions.version = .current` with network access. The PhotoKit export session supplies the asset, time range, video composition, audio mix and pitch algorithm. Preserve all of these. Never substitute a raw `AVURLAsset.url` for an edited or slow-motion rendition. A custom compositor uses a Photos-rendered intermediate before encoding.
+
+AVAssetReader/Writer renders Photos' composition at its own geometry, then scales the completed frames. Portrait output keeps display geometry with no upscaling and even dimensions. Preset bitrates are 7.5/4.5/3/1.5 Mbps at 1080p30 (Gentle/Standard/High/Maximum), scaled by output pixels/sec with a 0.2–4 multiplier. Resolution/frame rate caps are documented in the user guide. These settings follow [HEVCut's published approach](https://hevcut.com/tools/video-compressor) and [resolution guide](https://hevcut.com/guides/keep-4k-when-compressing-iphone-video); no independent performance comparison is claimed.
+
+Hardware acceleration is required; there is no silent software/SDR fallback. HLG/PQ uses Main10, BT.2020 and 10-bit pixel buffers with extended-range Core Image processing. Transfer, primaries and source static HDR metadata must survive native inspection; FFprobe independently verifies 10-bit/transfer/primaries and rejects unexpected Dolby Vision metadata. Unsupported HDR profiles fail closed. HLG Dolby Vision base layers omit dynamic DV metadata; HDR10 metadata insertion is automatic. Unknown/proprietary spatial, alpha, Log, protected and anamorphic video is rejected.
+
+Spatial Audio passthrough is limited to supported full unedited URL renditions without an audio mix; alternate groups/fallback associations are preserved rather than mixing both variants. Other supported audio mixes render to stereo AAC. Supported ancillary tracks pass through when compatible; otherwise the review warning records what could not transfer.
+
+Independent validation checks complete video/audio decoding, output duration (`max(0.5s, 0.5%)` tolerance), dimensions, frame rate, audio track count, HDR and actual size against the stored original resource. Unknown original size or non-smaller results are skipped. Successful output is bound by SHA-256 and `[size, mtime_ns]` before import. The native journal records the hash and exact imported identifier.
+
+## Photos transactions and approvals
+
+Only the personal System Photo Library is writable. Python enforces the selected System library before each operation; Swift handles full Photos authorization and blocks Shared Album assets. Public PhotoKit does not offer a reliable family Shared Photo Library membership check here. OSXPhotos' positive experimental shared flag blocks writes, but a false flag is not proof of personal ownership. Settings therefore require explicit confirmation that family Shared Photo Library is not configured. Do not remove that gate without a reliable replacement.
+
+Import ordering:
+
+1. Persist a stable operation ID and reviewed generation in workflow state.
+2. Recheck the source version, output hash and measured smaller size.
+3. Fsync native import intent.
+4. Create the copy and checkpoint its PhotoKit placeholder ID inside the change block.
+5. Verify that exact imported asset's duration/dimensions/media type after commit.
+6. Persist the complete native receipt and workflow pair, then release safe app-managed bytes.
+
+The original is not deleted by compression. `review.open` reads both identifiers and versions, then creates a fresh token bound to the job generation and both version snapshots. The comparison retrieves media again from Photos. Selected batch approvals freeze that same tuple per item. Native code rechecks it immediately before Keep/Revert. Modified assets invalidate approval and need inspection/review again.
+
+Keep Compressed copies supported current metadata/albums and deletes only the exact original; Revert deletes only the generated copy. Verify the removal and survivor before recording completion. Metadata includes capture date, location, favorite, hidden status, filename stem and writable regular albums. Faces, edits, smart/shared albums and proprietary data cannot be assumed to transfer. All removals use Photos/Recently Deleted; permanent deletion is never automated.
+
+Native `PhotosTransactionGate` serializes writes and reconciliation even if a backend request expires. Once intent exists, any ambiguous error becomes Needs attention and pauses further write processing. Inspection reconciles exact IDs/receipts without another write. An unknown import ID is not inferred from filename/date/size. Never automatically repeat uncertain imports or removals.
+
+## Persistence and migration
+
+Normal root: `~/Library/Application Support/Video Queue/`.
+
+| Path | Ownership / contents |
+| --- | --- |
+| `preferences.json` | Library path, setup acknowledgments, presets and retained legacy preferences. |
+| `workflow.json` | Version 4 jobs; sole writer is Python. |
+| `.app.lock` | Held by backend or installer, not both. |
+| `NativeJournals/<operation-id>.json` | Native write intent, generation, exact IDs, expected properties, hash and confirmed result. |
+| `NativeWork/<job>/<generation>/` | App-managed compressed/rendered media only. |
+| `Migrations/` | Fsynced version-3 workflow/preferences backups. |
+| `Requests/` | Version-1 Service handoff files; errors become `.failed`. |
+| `native.log`, `conversion.log` | Native/backend stderr and workflow diagnostics. |
+| Legacy workspaces/journals | Preserved for recovery; not automatically replayed. |
+
+`NativeStore` reads strictly: corrupt objects/unknown versions/invalid identities fail without discarding records. Stage transitions use temporary sibling files, fsync and atomic replace. Swift journal writes additionally fsync their parent directory. Jobs retain source/result IDs, source/result sizes, generation, expected media, versions, output hash/fingerprint, operation history, decision and legacy record/journal evidence. Approvals are never restored across launches.
+
+Version-3 migration backs up state/preferences first. Completed pairs remain excluded from new compression. Confirmed imported results become pending reviews. Older local-only results become Awaiting import and require an explicit action; changed/missing verification records cannot be imported. Interrupted Photos writes become Needs attention. Interrupted preparation/encoding becomes Paused, with no automatic import. External-file records are preserved as legacy history.
+
+Cleanup is restricted to known app-created filenames in NativeWork, excluding symlinks, external files and Photos bundles. Changed tracked files and unresolved operations are retained. Safe results are removed after confirmed import or close and requested again through Photos for comparison. Recovery bytes/reasons are visible in Details. Unchanged tracked outputs/backups in known app-owned legacy roots can be released after confirmed review/import. Legacy files outside these roots remain intact; the native release does not sweep arbitrary old workspaces. Photos' own cache is not app-managed storage.
+
+## Installer and Service
+
+`Install.command` delegates to `scripts/install.sh`; `install_macos.py` holds the data lock, builds the native bundle first, installs the package from a temporary source copy, rebuilds/registers the Service, then swaps the app bundle. It preserves user data. `build_macos.py` sets deployment target/usage strings/entitlements and ad hoc signs the bundle. A trusted distribution would need an identity, hardened-runtime review and notarization separately.
+
+The Automator Service uses the bundled AppleScript to extract exact selected IDs, invokes `python -m video_queue.photos_service`, writes `Requests/<uuid>.json` and opens the installed app. The backend accepts protocol 1 / `convert1080`, validates IDs against the loaded video catalog and queues the same compression workflow with a 1080p override. Setup must already allow writes. A Service request never includes deletion approval. Existing request format and application data locations remain compatible.
+
+## Verification and releases
+
+No tests or live Photos operations were run for this implementation. Static repository checks and native compilation were performed. Existing tests retain legacy contracts; they do not cover the new native player, encoder, bridge or migration. See [tests/README.md](../tests/README.md) and the [acceptance checklist](VERIFICATION.md) before requesting execution.
+
+For a release, record actual compiler/tool versions, build results, test coverage gaps and any explicitly authorized live-library operations. Build success is not proof of playback/HDR correctness or iCloud synchronization. Never run acceptance against a personal library merely because app data is isolated. The GitHub workflow performs static checks only.
+
+Keep version metadata in `pyproject.toml`; the native bundle reads it at build time. Package discovery includes new Python modules; `MANIFEST.in` includes native source for source distributions. Keep generated bundles, media, logs, environments and personal state out of commits. Commit/push/publish only when requested.

@@ -1,0 +1,364 @@
+import AppKit
+import AVFoundation
+import Combine
+import Foundation
+import Photos
+import SwiftUI
+
+struct VideoRow: Identifiable {
+    var raw: JSONObject
+    var id: String { string(raw["id"]) }
+    var name: String { string(raw["name"]) }
+    var jobID: String { string(raw["job_id"]) }
+    var state: String { string(raw["state"]) }
+    var detail: String { string(raw["detail"]) }
+    var resultID: String { string(raw["result_id"]) }
+    var originalID: String { string(raw["original_id"]).isEmpty ? id : string(raw["original_id"]) }
+    var favorite: Bool { raw["favorite"] as? Bool == true }
+    var local: Bool { raw["local"] as? Bool == true }
+    var shared: Bool { raw["shared_library"] as? Bool == true || raw["shared_album"] as? Bool == true }
+    var sourceSize: Double? { number(raw["source_size"]) }
+    var resultSize: Double? { number(raw["result_size"]) }
+    var estimate: Double? { resultSize ?? number(raw["estimated_size"]) }
+    var progress: Double? { number(raw["progress"]) }
+    var processing: Bool { ["Queued", "Downloading", "Converting", "Verifying", "Saving to Photos", "Applying decision"].contains(state) }
+    var canCompress: Bool {
+        ["Ready", "Error", "Cancelled", "Paused", "Waiting for connection", "Waiting for space", "Skipped"].contains(state)
+        && resultID.isEmpty && !shared && raw["excluded"] as? Bool != true
+    }
+    var reduction: Double? {
+        guard let sourceSize, let estimate else { return nil }
+        return sourceSize-estimate
+    }
+    var color: Color {
+        switch state {
+        case "Ready to review": return .blue
+        case "Completed": return .green
+        case "Needs attention", "Error": return .red
+        case "Waiting for connection", "Waiting for space", "Paused": return .orange
+        default: return processing ? .orange : .secondary
+        }
+    }
+    var savingText: String {
+        guard let original = sourceSize, let compressed = estimate, original > 0 else { return "Estimate unavailable" }
+        return "\(humanSize(original)) → \(humanSize(compressed)) · \(Int((original-compressed)/original*100))% smaller"
+    }
+}
+
+enum LibrarySection: String, CaseIterable, Identifiable {
+    case library = "Library", processing = "Processing", review = "Review", completed = "Completed"
+    var id: String { rawValue }
+}
+
+final class PacketWriter: @unchecked Sendable {
+    let lock = NSLock()
+    var input: FileHandle?
+    func send(_ value: JSONObject) {
+        guard let data = try? JSONSerialization.data(withJSONObject: ["protocol": 1].merging(value) { _, new in new }) else { return }
+        lock.lock(); defer { lock.unlock() }
+        try? input?.write(contentsOf: data + Data([10]))
+    }
+    func close() { lock.lock(); try? input?.close(); input = nil; lock.unlock() }
+}
+
+@MainActor
+final class AppModel: ObservableObject {
+    @Published var rows: [VideoRow] = []
+    @Published var section: LibrarySection = .library
+    @Published var selection = Set<String>()
+    @Published var search = ""
+    @Published var sort = "Most savings"
+    @Published var favoritesOnly = false
+    @Published var localOnly = false
+    @Published var preferences: JSONObject = [:]
+    @Published var library = ""
+    @Published var scanning = false
+    @Published var paused = false
+    @Published var connected = false
+    @Published var notice: String?
+    @Published var catalogError: String?
+    @Published var fatalError: String?
+    @Published var closing = false
+    @Published var authorizing = false
+    @Published var photoAuthorized = PHPhotoLibrary.authorizationStatus(for: .readWrite) == .authorized
+    @Published var runIDs = Set<String>()
+    let data: URL
+    let media: NativeMedia
+    let writer = PacketWriter()
+    private var process: Process?
+    private var replies: [String: CheckedContinuation<JSONObject, Error>] = [:]
+    private var commandTimeouts: [String: Task<Void, Never>] = [:]
+    private var closeReplied = false
+    private var started = false
+    private var reviewWindow: NSWindow?
+    private var playbackWindows: [NSWindow] = []
+    private let reader = PacketReader()
+    private var pipe: Pipe?
+
+    init() {
+        let arguments = CommandLine.arguments
+        func option(_ name: String) -> String? {
+            guard let index = arguments.firstIndex(of: name), arguments.indices.contains(index+1) else { return nil }
+            return arguments[index+1]
+        }
+        data = URL(fileURLWithPath: option("--data-dir") ?? NSHomeDirectory()+"/Library/Application Support/Video Queue").resolvingSymlinksInPath()
+        media = NativeMedia(data: data)
+    }
+    var processing: [VideoRow] { rows.filter(\.processing) }
+    var reviews: [VideoRow] { rows.filter { $0.state == "Ready to review" } }
+    var chosen: [VideoRow] { rows.filter { selection.contains($0.id) } }
+    var setupComplete: Bool {
+        photoAuthorized && string(preferences["personal_library_confirmed"]) == library && !library.isEmpty
+        && preferences["import_notice_accepted"] as? Bool == true
+    }
+    var filtered: [VideoRow] {
+        let values = rows.filter { row in
+            let matches: Bool
+            switch section {
+            case .library: matches = true
+            case .processing: matches = row.processing || ["Paused", "Waiting for connection", "Waiting for space", "Cancelled", "Error", "Needs attention", "Awaiting import"].contains(row.state)
+            case .review: matches = row.state == "Ready to review" || row.state == "Awaiting import" || row.state == "Needs attention"
+            case .completed: matches = row.state == "Completed"
+            }
+            return matches && (!favoritesOnly || row.favorite) && (!localOnly || row.local)
+                && (search.isEmpty || row.name.localizedCaseInsensitiveContains(search) || row.id.localizedCaseInsensitiveContains(search))
+        }
+        return values.sorted { a, b in
+            switch sort {
+            case "Filename": return a.name.localizedStandardCompare(b.name) == .orderedAscending
+            case "Newest": return string(a.raw["date"]) > string(b.raw["date"])
+            case "Largest original": return (a.sourceSize ?? -1) > (b.sourceSize ?? -1)
+            default:
+                let lhs = a.reduction ?? a.sourceSize ?? -1, rhs = b.reduction ?? b.sourceSize ?? -1
+                return lhs == rhs ? a.id < b.id : lhs > rhs
+            }
+        }
+    }
+    var compressionTargets: [VideoRow] {
+        let candidates = selection.isEmpty ? filtered : chosen
+        return candidates.filter { row in
+            guard row.canCompress else { return false }
+            if !selection.isEmpty { return true }
+            guard let size = row.sourceSize, let estimated = row.estimate else { return true }
+            return estimated <= size*0.95
+        }
+    }
+    var batchTotal: Int { rows.filter { runIDs.contains($0.jobID) }.count }
+    var batchProcessed: Int { rows.filter { runIDs.contains($0.jobID) && !$0.processing && $0.state != "Paused" }.count }
+
+    func start() {
+        guard !started else { return }; started = true
+        guard !data.pathComponents.contains(where: { $0.lowercased().hasSuffix(".photoslibrary") }) else {
+            fatalError = "Application data must be outside the Photos library."; return
+        }
+        do {
+            try FileManager.default.createDirectory(at: data, withIntermediateDirectories: true)
+            let task = Process()
+            let args = CommandLine.arguments
+            let custom = args.firstIndex(of: "--backend-python").flatMap { args.indices.contains($0+1) ? args[$0+1] : nil }
+            let python = custom ?? NSHomeDirectory()+"/Library/Application Support/Video Queue/venv/bin/python"
+            guard FileManager.default.isExecutableFile(atPath: python) else { throw WorkflowError(message: "Run Install.command to install the Python workflow backend.") }
+            task.executableURL = URL(fileURLWithPath: python)
+            task.arguments = ["-m", "video_queue.backend", "--stdio", "--data-dir", data.path]
+            var environment = ProcessInfo.processInfo.environment
+            environment["PATH"] = "/opt/homebrew/bin:/usr/local/bin:" + (environment["PATH"] ?? "/usr/bin:/bin")
+            environment["PYTHONUNBUFFERED"] = "1"; task.environment = environment
+            let input = Pipe(), output = Pipe(); pipe = output
+            task.standardInput = input; task.standardOutput = output; writer.input = input.fileHandleForWriting
+            let log = data.appendingPathComponent("native.log")
+            if !FileManager.default.fileExists(atPath: log.path) { FileManager.default.createFile(atPath: log.path, contents: nil) }
+            let errors = try FileHandle(forWritingTo: log); try errors.seekToEnd(); task.standardError = errors
+            reader.callback = { [weak self] packet in Task { @MainActor in self?.receive(packet) } }
+            let reader = reader
+            output.fileHandleForReading.readabilityHandler = { handle in
+                let chunk = handle.availableData
+                guard !chunk.isEmpty else { handle.readabilityHandler = nil; return }
+                reader.append(chunk)
+            }
+            task.terminationHandler = { [weak self] task in
+                Task { @MainActor in
+                    guard let self else { return }
+                    self.connected = false
+                    self.replies.values.forEach { $0.resume(throwing: WorkflowError(message: "The workflow backend stopped. Reopen the app to reconcile recovery.")) }
+                    self.replies.removeAll()
+                    self.commandTimeouts.values.forEach { $0.cancel() }; self.commandTimeouts.removeAll()
+                    self.media.cancel()
+                    if self.closing { self.finishNativeClose() }
+                    else if task.terminationStatus != 0 && self.fatalError == nil { self.fatalError = "The workflow backend stopped. Open native.log for details, then reopen Video Queue." }
+                }
+            }
+            process = task; try task.run(); connected = true
+            Task { await initialize() }
+        } catch { fatalError = error.localizedDescription }
+    }
+    private func receive(_ packet: JSONObject) {
+        guard number(packet["protocol"]) == 1 else { fatalError = "App/backend versions differ. Reinstall Video Queue."; return }
+        let type = string(packet["type"])
+        if type == "reply" {
+            let id = string(packet["id"])
+            commandTimeouts.removeValue(forKey: id)?.cancel()
+            guard let continuation = replies.removeValue(forKey: id) else { return }
+            if packet["error"] != nil { continuation.resume(throwing: WorkflowError(message: string(object(packet["error"])["message"]))) }
+            else { continuation.resume(returning: object(packet["result"])) }
+        } else if type == "native.request" {
+            let id = string(packet["id"]), method = string(packet["method"]), params = object(packet["params"])
+            let writer = writer, media = media
+            Task {
+                do {
+                    let result = try await media.perform(method, params) { stage, percent in
+                        writer.send(["type": "native.progress", "id": id, "stage": stage, "percent": percent as Any? ?? NSNull()])
+                    }
+                    writer.send(["type": "native.reply", "id": id, "result": result])
+                } catch {
+                    let problem = error as? WorkflowError
+                    writer.send(["type": "native.reply", "id": id, "error": ["message": error.localizedDescription,
+                        "code": error is CancellationError ? "cancelled" : problem?.code ?? "native_error", "uncertain": problem?.uncertain ?? false]])
+                }
+            }
+        } else if type == "event" {
+            switch string(packet["event"]) {
+            case "snapshot":
+                let value = object(packet["data"])
+                rows = (value["rows"] as? [JSONObject] ?? []).map { VideoRow(raw: $0) }
+                preferences = object(value["preferences"]); library = string(value["library"])
+                scanning = value["scanning"] as? Bool == true; paused = value["paused"] as? Bool == true
+                catalogError = value["catalog_error"] as? String; fatalError = value["fatal_error"] as? String
+                runIDs = Set(value["run_ids"] as? [String] ?? [])
+            case "job":
+                let row = VideoRow(raw: object(packet["row"]))
+                if let index = rows.firstIndex(where: { $0.id == row.id }) { rows[index] = row } else { rows.append(row) }
+            case "notice": notice = string(packet["message"])
+            case "fatal": fatalError = string(packet["message"])
+            case "shutdownReady": finishNativeClose()
+            default: break
+            }
+        }
+    }
+    func acceptPacket(_ packet: JSONObject) { receive(packet) }
+    func request(_ method: String, _ params: JSONObject = [:]) async throws -> JSONObject {
+        guard connected else { throw WorkflowError(message: "The workflow backend is not connected.") }
+        let id = UUID().uuidString
+        return try await withCheckedThrowingContinuation { continuation in
+            replies[id] = continuation
+            writer.send(["type": "request", "id": id, "method": method, "params": params])
+            commandTimeouts[id] = Task { [weak self] in
+                try? await Task.sleep(for: .seconds(1800))
+                guard !Task.isCancelled, let self, let continuation = self.replies.removeValue(forKey: id) else { return }
+                continuation.resume(throwing: WorkflowError(message: "This operation has not finished. Inspect Photos status before retrying."))
+                self.commandTimeouts.removeValue(forKey: id)
+            }
+        }
+    }
+    func initialize() async {
+        do { _ = try await request("initialize") } catch { notice = error.localizedDescription }
+    }
+    func allowPhotos() {
+        authorizing = true
+        PHPhotoLibrary.requestAuthorization(for: .readWrite) { [weak self] status in
+            Task { @MainActor in
+                self?.authorizing = false; self?.photoAuthorized = status == .authorized
+                if status == .authorized { AssetRepository.shared.register(); await self?.refresh() }
+                else { self?.notice = "Allow Full Photos Access in System Settings → Privacy & Security → Photos." }
+            }
+        }
+    }
+    func refresh() async { do { _ = try await request("catalog.refresh") } catch { notice = error.localizedDescription } }
+    func action(_ method: String, _ params: JSONObject = [:]) {
+        Task { do { _ = try await request(method, params) } catch { notice = error.localizedDescription } }
+    }
+    func compress() { action("jobs.enqueue", ["ids": compressionTargets.map(\.id)]) }
+    func review(_ row: VideoRow) {
+        Task {
+            do {
+                let value = try await request("review.open", ["job_id": row.jobID])
+                let session = ReviewSession(model: self, initial: value)
+                let controller = NSHostingController(rootView: ReviewView(session: session))
+                let window = NSWindow(contentViewController: controller)
+                window.title = "Review — \(row.name)"; window.setContentSize(.init(width: 1020, height: 720)); window.center()
+                window.isReleasedWhenClosed = false; reviewWindow?.close(); reviewWindow = window
+                window.makeKeyAndOrderFront(nil)
+            } catch { notice = error.localizedDescription }
+        }
+    }
+    func decide(_ values: [JSONObject], _ decision: String) async throws -> Bool {
+        guard !values.isEmpty else { return false }
+        let total = values.reduce(0.0) { $0 + max(0, (number($1["source_size"]) ?? 0)-(number($1["result_size"]) ?? 0)) }
+        let dialog = NSAlert()
+        dialog.messageText = decision == "keep" ? "Keep \(values.count) compressed video(s)?" : "Keep \(values.count) original video(s)?"
+        dialog.informativeText = decision == "keep"
+            ? "The matching originals will move to Recently Deleted. Library size reduction: \(humanSize(total)). This is not immediately reclaimed disk space. Changes affect devices using iCloud Photos."
+            : "Only the generated compressed copies will move to Recently Deleted. The matching originals stay in Photos. Proposed library size reduction being discarded: \(humanSize(total))."
+        dialog.informativeText += "\n\nRemoved videos normally remain recoverable for 30 days. Permanent deletion remains manual."
+        dialog.addButton(withTitle: decision == "keep" ? "Keep Compressed" : "Revert")
+        dialog.addButton(withTitle: "Cancel")
+        guard dialog.runModal() == .alertFirstButtonReturn else { return false }
+        _ = try await request("review.decide", ["decision": decision, "reviews": values])
+        return true
+    }
+    func decideSelected(_ decision: String) {
+        let ids = chosen.filter { $0.state == "Ready to review" }.map(\.jobID)
+        Task {
+            do {
+                let response = try await request("review.batch", ["job_ids": ids])
+                _ = try await decide(response["reviews"] as? [JSONObject] ?? [], decision)
+            } catch { notice = error.localizedDescription }
+        }
+    }
+    func showPhotos(_ row: VideoRow) {
+        let identifier = row.state == "Completed" && string(row.raw["decision"]) == "keep" ? row.resultID : row.originalID
+        action("photos.show", ["id": identifier])
+    }
+    func play(_ row: VideoRow, compressed: Bool = false) {
+        let identifier = compressed || row.state == "Completed" && string(row.raw["decision"]) == "keep" ? row.resultID : row.originalID
+        Task {
+            do {
+                let item = try await AssetRepository.shared.player(identifier)
+                let player = AVPlayer(playerItem: item)
+                let controller = NSHostingController(rootView: PlaybackView(player: player))
+                let window = NSWindow(contentViewController: controller); window.title = row.name
+                window.setContentSize(.init(width: 900, height: 600)); window.center(); window.isReleasedWhenClosed = false
+                playbackWindows.append(window); window.makeKeyAndOrderFront(nil); player.play()
+            } catch { notice = error.localizedDescription }
+        }
+    }
+    func beginClose() -> Bool {
+        if closing { return false }
+        if !processing.isEmpty {
+            let dialog = NSAlert(); dialog.messageText = "Stop and close Video Queue?"
+            dialog.informativeText = "Downloads and conversions will stop. Finished Photos copies and pending reviews will remain available. An active Photos change will finish safely first."
+            dialog.addButton(withTitle: "Stop and Close"); dialog.addButton(withTitle: "Keep Working")
+            guard dialog.runModal() == .alertFirstButtonReturn else { return false }
+        }
+        closing = true
+        if !connected {
+            if media.hasWork { finishNativeClose(); return false }
+            media.shutdown(); return true
+        }
+        Task { do { _ = try await request("shutdown") } catch { notice = error.localizedDescription } }
+        return false
+    }
+    func finishNativeClose() {
+        media.cancel()
+        Task {
+            while media.hasWork { try? await Task.sleep(for: .milliseconds(100)) }
+            guard !closeReplied else { return }; closeReplied = true
+            media.shutdown(); writer.close(); NSApp.reply(toApplicationShouldTerminate: true)
+        }
+    }
+}
+
+// The framing queue owns its buffer, avoiding work on SwiftUI's main thread.
+final class PacketReader: @unchecked Sendable {
+    private var buffer = Data()
+    let queue = DispatchQueue(label: "videoqueue.decode")
+    var callback: ((JSONObject) -> Void)?
+    func append(_ data: Data) {
+        queue.async {
+            self.buffer.append(data)
+            while let end = self.buffer.firstIndex(of: 10) {
+                let line = self.buffer[..<end]; self.buffer.removeSubrange(...end)
+                if let packet = try? JSONSerialization.jsonObject(with: Data(line)) as? JSONObject { self.callback?(packet) }
+            }
+        }
+    }
+}

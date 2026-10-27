@@ -1,219 +1,120 @@
 # User guide
 
-[Back to README](../README.md) · [Developer guide](DEVELOPER_GUIDE.md)
-
-Video Queue helps you keep smaller versions of videos in Apple Photos. Its workflow is **Compress → Review → Replace**. You decide which compressed results replace their originals.
-
-## Contents
-
-- [Install and update](#install-and-update)
-- [Choose a library and allow access](#choose-a-library-and-allow-access)
-- [Compress, review and replace](#compress-review-and-replace)
-- [Understand video statuses](#understand-video-statuses)
-- [Quality and multiple videos](#quality-and-multiple-videos)
-- [Convert from the Photos menu](#convert-from-the-photos-menu)
-- [Storage and closing the app](#storage-and-closing-the-app)
-- [Troubleshooting and recovery](#troubleshooting-and-recovery)
-- [Limits and uninstalling](#limits-and-uninstalling)
+[README](../README.md) · [Developer guide](DEVELOPER_GUIDE.md)
 
 ## Install and update
 
-You need a Mac with Apple Photos, [Homebrew](https://brew.sh/), and an internet connection to install dependencies. Cloud-only videos also need an internet connection to download. This repository does not specify a minimum supported macOS version.
+Requirements: **macOS 26+**, a Mac supporting hardware HEVC encoding, **Xcode 26+ / Swift 6.2+**, and [Homebrew](https://brew.sh/). The installer builds the native app locally, installs Python 3.13, FFmpeg/ffprobe and ExifTool, and creates the Photos Service.
 
-1. Download the repository ZIP from GitHub and unzip it, or clone the repository.
-2. Quit Video Queue before installing or updating. Let an approved Photos operation finish safely if the app is busy.
-3. Double-click [Install.command](../Install.command). Alternatively, open Terminal in the repository folder and run:
+Quit Video Queue, then double-click `Install.command` or run `bash Install.command` in the repository. The app is installed at `~/Applications/Video Queue.app`. Updates preserve existing application data, preferences, identifiers and journals. Because local builds use an ad hoc signature, macOS may ask for permissions again after an update. Distribution signing/notarization is not provided by this installer.
 
-   ```bash
-   bash Install.command
-   ```
+Open the app through Finder or Spotlight. The old Tk interface is no longer the application entry point.
 
-4. The installer installs dependencies and opens the app when finished. If installation stops, read the Terminal error before retrying.
+## First launch and Settings
 
-The installer creates:
+1. Click **Allow Photos Access** and allow full access. If denied, use **System Settings → Privacy & Security → Photos**.
+2. Open **Video Queue → Settings…** (`⌘,`). Select your `.photoslibrary` bundle.
+3. Check **Photos → Settings → General**: the selected library must be the **System Photo Library** to compress or make Photos changes. Other libraries can be browsed, but native playback accesses only the System library.
+4. Check the Shared Library settings in Photos. Confirm in Video Queue that family **Shared Photo Library is not configured** for this library. Personal iCloud Photos is supported. Shared or uncertain cases remain browse/play-only.
+5. Read and accept the notice explaining that compressed copies are added before review and which metadata can transfer. Save.
 
-| Item | Location |
+The saved library is scanned automatically on launch. If catalog reading fails, check the path and grant Video Queue Full Disk Access in **Privacy & Security → Full Disk Access**, then reopen it. Refresh (`⌘R`) reloads the catalog; the app does not edit Photos databases directly.
+
+## Browse and select
+
+The gallery shows thumbnails, favorites (♥), duration, original size, estimated size reduction, cloud/local availability at the last catalog refresh, and one current status.
+
+- **Library:** all catalog entries, including tracked results.
+- **Processing:** work in progress, paused/retryable work and errors.
+- **Review:** saved compressed pairs awaiting a decision and items needing inspection.
+- **Completed:** confirmed decisions, grouped into one entry per original/replacement pair.
+
+Sort by most estimated savings, largest original, date or filename. Search filenames/identifiers and filter favorites or local items. Click cards to toggle multiple selection. With nothing selected, Compress targets eligible videos in the current view whose estimated reduction is at least 5%, plus videos without a reliable estimate. Explicit selection allows trying other videos; actual output must still be smaller.
+
+Estimates are approximate, especially when frame rate or duration is unavailable. The original stored resource size is used for the final comparison, including for edited videos.
+
+Right-click a card for **Play**, **Compare**, **Show in Photos**, compression and Details. Play may retrieve a cloud rendition. Show in Photos reveals the surviving version after a completed decision; it does not switch libraries.
+
+## Compress
+
+Click **Compress**. There are no separate download/upload/delete controls in the normal workflow.
+
+- Photos retrieves its **current rendered version**, including supported edits, trims and slow motion.
+- One video encodes at a time. At most one original is prefetched ahead.
+- Photos changes are serialized independently of download and encoding.
+- Download percentages appear when Photos supplies them; otherwise an activity indicator appears. Conversion shows frame progress. Overall batch completion is displayed separately.
+- Offline/cloud failures leave those videos retryable while other videos continue. Use **Resume / Retry** or select them and Compress again.
+- The app checks complete playback, timing, dimensions, audio tracks, HDR and measured size. A failed or larger result is not imported; its original remains unchanged.
+- A successful smaller copy is automatically added to Photos and verified by its exact identifier. Both Photos versions then remain available for review.
+
+**Pause** stops scheduling new conversions/downloads after current work finishes. A verified result can still finish saving to Photos. **Stop** cancels reads/encoding and clears queued decisions; an already active Photos transaction is allowed to finish safely.
+
+### Presets
+
+Settings apply to newly queued work. The defaults follow [HEVCut's published presets](https://hevcut.com/tools/video-compressor):
+
+| Preset | Reference bitrate at 1080p / 30 fps | Resolution cap | Frame rate cap |
+| --- | --- | --- | --- |
+| Gentle | 7.5 Mbps | 1080p | Original |
+| Standard (default) | 4.5 Mbps | 1080p | 60 fps |
+| High | 3 Mbps | 1080p | 60 fps |
+| Maximum | 1.5 Mbps | 720p | 30 fps |
+
+Bitrate scales with output pixels and frame rate, within bounded limits. **Keep original resolution** lifts the resolution cap. Portrait orientation is preserved and smaller media is never upscaled. Advanced settings offer HEVC/H.264, MP4/MOV and a resolution override. H.264 is SDR-only.
+
+Supported HLG/HDR10 uses 10-bit HEVC and must pass HDR verification. Supported Dolby Vision HLG base layers become HLG without Dolby Vision dynamic metadata. Unsupported profiles, Apple Log, spatial/immersive video, alpha, protected content and anamorphic media are skipped. Cinematic appearance is rendered without retaining editable depth/focus. Spatial Audio passes through only in supported unedited renditions/containers; edited audio is rendered to stereo AAC. Limitations are shown with the result.
+
+## Review and decide
+
+Open a **Ready to review** video to compare the two Photos assets. Both players share playback position and a timeline. Drag the divider; choose full Original or Compressed views; zoom; switch which audio is audible. Playback pauses if buffering would break alignment.
+
+- **Keep Compressed:** confirms the exact reviewed identifiers/versions, preserves supported metadata on the copy, then moves only the matching original to Recently Deleted.
+- **Revert:** moves only the generated copy to Recently Deleted and keeps the original.
+
+Select multiple review cards to decide a batch. The confirmation displays the count and measured library size reduction for Keep Compressed. Decisions run sequentially. A changed asset invalidates approval and requires inspection and another review. There is no automatic deletion based on a filename or a size estimate.
+
+Dates, location, favorite, hidden status, original filename stem and writable regular albums are preserved where PhotoKit supports them. Faces, edit history, smart/shared albums, some proprietary metadata and editability cannot be transferred. Review the result before keeping it.
+
+**Completed** means the local Photos decision was verified. It does not prove iCloud synchronization. Photos normally retains removed videos in Recently Deleted for 30 days. Permanent deletion stays manual; see [Apple's guide](https://support.apple.com/en-lamr/104967). Revert is available before the decision; after Keep Compressed, recovery is through Photos' Recently Deleted.
+
+## Status reference
+
+| Status | Meaning / action |
 | --- | --- |
-| App | `~/Applications/Video Queue.app` |
-| App data and Python runtime | `~/Library/Application Support/Video Queue/` |
-| Photos Service | `~/Library/Services/Convert video to 1080p.workflow` |
+| Ready | Select and Compress. |
+| Queued | Waiting for retrieval or encoding; a prefetched original may already be prepared. |
+| Downloading | Photos is retrieving/preparing the current version. Percentage if available. |
+| Converting | Hardware encoding, with frame progress. |
+| Verifying | Checking complete decoding, timing, dimensions, HDR and size. |
+| Saving to Photos | Waiting for or performing a journalled import. Original stays. |
+| Ready to review | Both Photos versions are verified. Compare and decide. |
+| Applying decision | Serial Keep Compressed/Revert transaction. |
+| Completed | Matching removal and surviving version were confirmed. |
+| Paused / Cancelled | No automatic resume after interruption. Resume or select and Compress. |
+| Waiting for connection / Waiting for space | Retry after fixing the cause. Other videos may continue. |
+| Skipped | Unsupported media or result not smaller; see reason in Details. |
+| Error | Ordinary failure; original unchanged. Retry after checking Details. |
+| Needs attention | Changed asset, uncertain transaction or retained recovery file. Inspect first. |
+| Awaiting import | Migrated local-only result. Explicit **Add existing result for review…** is required. |
 
-This is an unsigned local app. macOS may require you to use right-click → **Open** or allow opening it through Privacy & Security. After an update, quit and reopen Video Queue to load the new code. Updating does not itself replace any Photos videos.
+## Photos Service
 
-## Choose a library and allow access
+Installation adds **Photos → Services → Convert video to 1080p**. Select one or more videos in Photos' grid and run it. It queues the same native workflow with a 1080p override and stops at review with originals retained. It never approves Keep Compressed.
 
-1. In Apple Photos, open **Photos → Settings → General** and check which library is the **System Photo Library**. Video Queue does not change that setting for you.
-2. In Video Queue, click **Settings…** to open a separate window. Choose or paste the `.photoslibrary` path and click **Save**. You can also choose a folder containing exactly one Photos library. **Cancel** closes the window without applying edits.
-3. The library loads after saving and automatically whenever the app launches. With no saved choice, the app tries the System Photo Library, then the last-opened library. The main window shows the library name; **Refresh** reloads its catalog.
-4. The path stays remembered if an external drive is unavailable. Reconnect the drive and click **Refresh**, or change the library in Settings. An unavailable library does not cause a silent switch to another library. Finish or stop queued work before changing libraries.
+If missing, check **System Settings → Keyboard → Keyboard Shortcuts → Services**, restart Photos, or rerun the installer with Video Queue closed. A selection must belong to the loaded personal System Photo Library. Complete Video Queue setup first. Photos' Services menu is the integration point; an item-specific contextual extension is not installed.
 
-Other libraries can be browsed, but the complete compression/replacement workflow requires the System Photo Library. Scanning and browsing do not download full originals.
+## Close, storage and recovery
 
-Allow these permissions when needed:
+Closing during processing asks **Stop and Close** or **Keep Working**. Confirming stops downloads/encoding, preserves finished Photos reviews and waits for an active Photos transaction. An operating-system Photos confirmation may need a response before it can finish.
 
-| Permission | Used for | Where to manage it |
-| --- | --- | --- |
-| Full Disk Access, if catalog reading is denied | Reading the library catalog | System Settings → Privacy & Security → Full Disk Access. Add `~/Applications/Video Queue.app`, then quit and reopen it. |
-| Full Photos access | Original downloads, inspecting assets and approved replacement | System Settings → Privacy & Security → Photos. |
-| Automation / control of Photos | Reading a Service selection and showing an item in Photos | System Settings → Privacy & Security → Automation, or the macOS permission prompt. |
+Safe app-managed media under `~/Library/Application Support/Video Queue/NativeWork/` is released after verified import and on clean close. Comparison media is requested again from Photos as needed. Photos itself manages its iCloud downloads and cache; Video Queue cannot promise to evict those bytes.
 
-**More → Permissions help…** shows the app location and setup instructions. A “library/database not found” error can also mean the wrong folder was selected.
+Unresolved operations retain recovery files. **Details** shows their size/reason, both identifiers, generation and operation history; **Open Logs and Recovery** opens the data directory. Preferences, identifiers, workflow records, migration backups and transaction journals remain. External inputs and files inside `.photoslibrary` bundles are never removed by cache cleanup.
 
-The menu bar belongs to Video Queue: **Help → Video Queue User Guide** opens this guide, and **About Video Queue** shows app information. On macOS, the app menu's Settings command opens the same library and compression settings window. **File → Close Window** closes the focused window; closing the main window or choosing Quit uses the normal confirmation and cleanup flow.
+For **Needs attention**, use **Inspect Photos status**. Inspection reads exact IDs and journals; it never retries an import or deletion. If both versions are verified, another review becomes available. If an import ID is unknown or a version is missing, the state remains unresolved: inspect Photos and the journal manually. Do not repeatedly enqueue the same source or delete recovery files to clear the warning.
 
-## Compress, review and replace
+On upgrade, version-3 state and preferences are backed up under `Migrations/` before migration. Completed pairs stay grouped. Older local-only results require explicit import; pending writes require reconciliation. The old interface refuses to open migrated state. Legacy external-file records are preserved as history but are not part of the native Photos gallery.
 
-### 1. Browse your videos
+## Verification limits
 
-The thumbnail grid and List show filenames, original sizes, durations and favorites marked with **♥**. Videos are initially sorted by original size, largest first. Unknown sizes sort last. Search by filename, date or asset ID; expand **Filters** for minimum size or dimensions.
-
-Command-click toggles thumbnail selection; Shift-click selects a range. **Select page** selects the current page, which contains up to 500 items. Switching between Thumbnails and List preserves the current selection.
-
-Thumbnails use Photos' cached poster images or an available local video. A placeholder means no suitable local poster is available; it does not mean the video is damaged. Click **Refresh** to reload favorites changed in Photos. **More → Save list as CSV…** exports the filtered catalog.
-
-### 2. Compress selected videos
-
-Select one or several videos and click **Compress**. Video Queue automatically:
-
-1. Downloads a cloud original or prepares an independent local working copy.
-2. Creates a compressed video outside the Photos library.
-3. Checks duration, audio stream count, playback decoding and supported metadata.
-4. Displays **Ready to review** and the measured size reduction.
-
-One original can download while another video converts. Repeated requests for the same queued video reuse its download. Photos remains unchanged during compression.
-
-A result such as `1.2 GB → 180 MB · 85% smaller` compares the primary video files. Original-size columns use MiB; the reduction display uses decimal KB/MB/GB. This is not a total audit of Photos caches, edits or other associated resources.
-
-### 3. Review the result
-
-Select one result and use **Play original** and **Play compressed**. Playback opens your default video player. Playing an original downloads it automatically if necessary; you can preview a video before deciding to compress it. Double-clicking a thumbnail also opens playback.
-
-Review quality, orientation, sound and the parts of the video that matter to you. Files that are not smaller cannot be used for replacement. You can leave a result unapproved and keep its original unchanged.
-
-### 4. Replace approved results
-
-Select one or several results with **Ready to review**, then click **Replace in Photos…**. Every selected result must be eligible. Read the confirmation, including the total size reduction and metadata limitations.
-
-For each approved video, the app imports or reuses its recorded compressed copy, verifies the exact Photos asset, then moves the original to Recently Deleted. Replacement runs one video at a time. Photos may display an additional native confirmation.
-
-Approval applies to the reviewed file and its recorded properties. A changed or missing result needs another review: retrieve an existing verified Photos copy if available, or compress again. An uncertain Photos operation pauses the replacement batch and requires attention before retrying.
-
-### 5. Find and play the remaining copy
-
-After replacement, the entry becomes **Done**. The original and compressed version remain grouped in one catalog entry. **Play** opens the compressed video; if its local temporary copy was cleared, it can be downloaded from Photos again.
-
-Use **More → Show in Photos** to select the remaining copy in Apple Photos. Before replacement, this command selects the original; **Show converted in Photos** can select an existing compressed Photos copy separately. Open the same library in Photos if navigation cannot find the item.
-
-### What replacement changes
-
-Replacement creates a **new Photos asset**. Dates, location, favorite and hidden flags, and writable regular-album membership are transferred while the original is present. Faces, edit history, captions, keywords, poster frames and smart-album membership may not transfer.
-
-**Done means the local Photos replacement was verified.** It does not confirm completion of iCloud synchronization or immediately available disk space. Deleting an original also affects devices using iCloud Photos. Originals normally remain recoverable in **Recently Deleted for 30 days**; permanent deletion is manual. Review your results before permanently deleting anything. See [Apple’s deletion guide](https://support.apple.com/en-lamr/104967).
-
-## Understand video statuses
-
-Each video has one main status. More detailed download and Photos information is under **More → Video details…**.
-
-| Status | Meaning / next action |
-| --- | --- |
-| Ready | Available to select for compression. It may still need downloading. |
-| Queued | Waiting for download, conversion or an approved replacement. |
-| Downloading (%) | Preparing an original or retrieving a compressed Photos copy. A percentage appears when available. |
-| Converting (%) | Encoding and verifying the result. The percentage includes several processing stages. |
-| Ready to review | A compressed result is available. Play it, then approve replacement if wanted. An older uploaded result may need downloading for playback first. |
-| Replacing | Processing an approved import, verification and original removal. |
-| Done | Replacement in the local Photos library is recorded as complete. |
-| Paused | Conversion is waiting for **Resume**. |
-| Cancelled | Work was stopped. Select **Compress** again when you want to retry. |
-| Skipped | Unsupported HDR/anamorphic video, or no size reduction. Details gives the reason. |
-| Error | Download, conversion or file validation failed. Read Details before retrying. |
-| Needs attention | A Photos operation is unresolved, or an original was removed without a known verified replacement. Use **Check Photos status** and inspect the journal/Photos before retrying. |
-
-A heart is a Photos favorite marker, not a processing status. “Downloaded” in Details describes local availability, which can include Photos' own original; it is independent of conversion progress.
-
-## Quality and multiple videos
-
-Open **Settings… → Conversion settings** to choose how videos are converted. Click **Save** to keep changes across launches; **Compress** uses these saved choices:
-
-| Setting | Default | Other choices |
-| --- | --- | --- |
-| Codec | HEVC | H.264 |
-| Resolution | 1080p | 720p, 2160p |
-| Quality | Balanced | High, Small |
-| Container | MP4 | MOV |
-
-Resolution is a maximum: landscape and portrait aspect ratios are preserved, and smaller inputs are not upscaled. Quality and resolution affect both appearance and size; a smaller result is not guaranteed. The settings in effect when a video is queued are kept for that video.
-
-| Control | Effect |
-| --- | --- |
-| Compress | Adds more eligible videos while download/conversion work is running. |
-| Pause | Finishes the current conversion, then pauses waiting conversions. Downloads continue. |
-| Resume | Continues paused conversions. |
-| Stop compression | Cancels the active conversion and clears its waiting queue. Existing downloads may finish, but do not automatically start new conversions. |
-| Cancel downloads | Stops the active download and waiting downloads; an active conversion can continue. |
-
-Replacement, changing libraries and downloading a compressed Photos copy wait until work is idle. Local compressed playback remains available during conversion. Ordinary download/conversion errors do not stop other successful videos from progressing.
-
-## Convert from the Photos menu
-
-1. Select one or several videos in Apple Photos. Thumbnail and album selection work; full-screen playback is unnecessary.
-2. Choose **Photos → Services → Convert video to 1080p**. Some right-click menus also expose **Services**; macOS controls whether it appears there.
-3. Video Queue opens and compresses selected videos at up to 1080p using its current codec/quality/container settings.
-4. Review the results in Video Queue and approve **Replace in Photos…** separately.
-
-The Service never approves replacement or deletes originals. Still pictures in mixed selections are ignored. Existing results and completed replacements are reused. Service requests wait until the app is idle, and interrupted requests are not automatically replayed.
-
-If the Service is missing, run the installer again and enable it under **System Settings → Keyboard → Keyboard Shortcuts → Services**, then reopen Photos. If selection cannot be resolved, choose the correct System Photo Library in Video Queue's Settings, save it, and try again.
-
-## Storage and closing the app
-
-Working videos, previews and thumbnails are stored under `~/Library/Application Support/Video Queue/`. The app checks available local space before downloads and conversion. Space is needed for originals and temporary outputs even when the aim is to reduce iCloud storage.
-
-Closing the main window or choosing Quit (including Command-Q) shows **Stop and close Video Queue?** when downloads, conversions or queued work are present. Choose **Yes** to cancel queued work, stop active downloads/conversion and close after temporary-file cleanup. Choose **No** to leave the app and its work running. The window shows shutdown progress after confirmation. An approved Photos transaction already in progress is allowed to finish safely before closing.
-
-| File category | Closing behavior |
-| --- | --- |
-| Temporary originals and compressed copies after confirmed replacement | Cleared. |
-| Unreviewed generated results | Ask once before discarding. Cancel keeps the app open; discarding leaves Photos originals unchanged. |
-| Recovery files for unresolved Photos actions or missing replacements | Retained; Details explains why and shows their size. |
-| External input files and changed/replaced output files | Preserved. |
-| Preferences, workflow records, identifiers, logs and journals | Retained. |
-
-Unchanged generated outputs recorded by older versions follow the same confirmation and cleanup policy. After an interrupted exit, stale caches are cleaned on launch while recorded unreviewed results and recovery files remain protected. Cleanup does not remove Photos-managed originals or Photos' own caches.
-
-## Troubleshooting and recovery
-
-| Problem | What to do |
-| --- | --- |
-| Wrong or unavailable library | Check the saved path in Settings, reconnect its drive and click Refresh. Compression requires the System Photo Library. |
-| Catalog access denied | Use Permissions help; allow Full Disk Access for Video Queue.app and reopen it. |
-| Download stalls or fails | Check connectivity and full Photos access, read Details, then retry after the queue stops. A download without a provider percentage shows activity instead. |
-| Not enough local storage | Free local space, then retry. The original remains in Photos. |
-| HDR, anamorphic or no smaller result | Read the skip reason. For size alone, try Small quality or 720p; unsupported HDR is not enabled by changing quality. |
-| Result changed or missing | Compress and review again. Changed files are not automatically deleted. |
-| Photos helper failed / Needs attention | Use Check Photos status and inspect both versions in Photos. Do not blindly repeat an import. |
-| Older osxphotos attribute error or native callback exception | Quit and update from the current repository. Share Details if it persists; check for an existing import before retrying. |
-| Show in Photos cannot find the video | Open the matching library in Photos. The asset may also have been removed outside Video Queue. |
-| Storage has not decreased | Compression alone does not replace originals. Check replacement, Recently Deleted, retained recovery copies and iCloud synchronization separately. |
-| App says it is already open | Use the existing instance, or quit it before starting another. |
-| Closing during download/conversion | Choose Yes in Stop and close. It stops work and cleans up; an approved Photos write may finish first. If reporting a shutdown issue, include `launch.log` as well as Details. |
-
-**More → Check Photos status** reads the recorded original and replacement identifiers without importing or deleting. It can resolve a known completed operation. If an interrupted import has no recorded replacement ID, it remains unresolved; inspect Photos and the journal before trying to add the file again.
-
-For support, open **More → Video details… → Copy details**. Include what you selected, what action failed and the displayed status. Review details before sharing: filenames, library paths and identifiers may be personal.
-
-Useful locations:
-
-- Conversion log: `~/Library/Application Support/Video Queue/conversion.log`
-- Launcher log: `~/Library/Application Support/Video Queue/launch.log`
-- Photos journals: `~/Library/Application Support/Video Queue/Photos work/journals/`
-
-Restore an original through Photos' Recently Deleted, or use a retained local recovery copy when available. Keep recovery files and journals until the unresolved operation has been checked.
-
-## Limits and uninstalling
-
-Current conversion supports SDR video, software encoding and AAC audio. Extra video tracks, subtitles and proprietary telemetry are omitted. Supported capture dates, location and descriptive metadata are checked; retained QuickTime movie/track dates are preserved. Photos chooses the new poster frame.
-
-Live Photos remain picture assets and are not processed by this video workflow. A Photos asset whose duration/dimensions differ from the independent original is refused for replacement. Historical external-file entries can still be played and inspected, but the main workflow is for Photos videos.
-
-To uninstall, remove `~/Applications/Video Queue.app` and `~/Library/Services/Convert video to 1080p.workflow`. Inspect recovery files before removing the Application Support folder. Photos assets, older external output folders and shared Homebrew dependencies remain.
+The native app builds, but live Photos/media acceptance checks have not been run for this implementation. See [verification scenarios](VERIFICATION.md). Installing/building is separate from approving any live-library verification work.

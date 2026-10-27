@@ -1,6 +1,32 @@
 # Changelog
 
-## Unreleased
+## Unreleased — 4.0.0 native workflow
+
+### Added
+
+- macOS 26+ SwiftUI gallery, separate Settings and native menus.
+- Library, Processing, Review and Completed filters with favorites, availability and phase/batch progress.
+- AVKit comparison with synchronized playback, shared timeline, divider, zoom and audio selection.
+- Hardware HEVC/H.264 media layer for Photos' current rendition, supported HLG/HDR10 and rendered edits/slow motion.
+- Gentle, Standard, High and Maximum presets; Standard / 1080p HEVC default.
+- Headless Python scheduler connected through asynchronous versioned JSON.
+- Journalled automatic smaller-copy import followed by explicit Keep Compressed or Revert, including batch decisions.
+- Persistent review pairs, exact identifier/version/generation approvals, serialized native changes and explicit reconciliation.
+- Version-3 state/preferences backups and migration; explicit action for older local-only results.
+- Native bundle build/signing command, updated installer/Photos Service and separate user/developer/verification guides.
+
+### Changed
+
+- Native app replaces the Tk entry point; legacy helpers remain available for compatibility and recovery.
+- Temporary media is released after verified import; comparison retrieves Photos media again.
+- Closing stops downloads/encoding after confirmation while allowing an active Photos transaction to finish safely.
+- Shared/uncertain cases remain browse/play-only; the full workflow requires a confirmed personal System Photo Library.
+
+### Verification
+
+- Native compilation and repository static checks only. No tests, live Photos writes or media acceptance scenarios executed.
+
+## Previous unreleased work (3.0.4)
 
 ### Added
 

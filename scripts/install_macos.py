@@ -3,29 +3,18 @@
 import fcntl
 import os
 from pathlib import Path
-import plistlib
+import platform
 import shutil
 import subprocess
 import sys
 import tempfile
-import tomllib
+import uuid
+
+from build_macos import build
 
 
 ROOT = Path(__file__).resolve().parents[1]
 
-
-def atomic_write(path, content, mode=0o644):
-    """Publish a complete bundle file without exposing a partial write."""
-    descriptor, temporary = tempfile.mkstemp(prefix=".videoqueue-", dir=path.parent)
-    try:
-        with os.fdopen(descriptor, "wb") as stream:
-            stream.write(content)
-            stream.flush()
-            os.fsync(stream.fileno())
-        os.chmod(temporary, mode)
-        os.replace(temporary, path)
-    finally:
-        Path(temporary).unlink(missing_ok=True)
 
 
 def install():
@@ -34,9 +23,10 @@ def install():
     if sys.version_info[:2] != (3, 13):
         raise RuntimeError("Run the installer with Homebrew Python 3.13.")
 
-    project = tomllib.loads((ROOT / "pyproject.toml").read_text())["project"]
+    if int(platform.mac_ver()[0].split(".")[0]) < 26:
+        raise RuntimeError("Video Queue requires macOS 26 or later.")
     data = Path.home() / "Library" / "Application Support" / "Video Queue"
-    bundle = Path.home() / "Applications" / "Video Queue.app" / "Contents"
+    bundle = Path.home() / "Applications" / "Video Queue.app"
     data.mkdir(parents=True, exist_ok=True)
 
     # Hold the same lock as the GUI for the entire runtime update.
@@ -46,52 +36,52 @@ def install():
         except BlockingIOError as error:
             raise RuntimeError("Quit Video Queue before installing or updating.") from error
 
-        environment = data / "venv"
-        subprocess.run([sys.executable, "-m", "venv", str(environment)], check=True)
-        python = str(environment / "bin" / "python")
-        # Build away from the checkout so installation leaves it clean.
-        with tempfile.TemporaryDirectory(prefix="videoqueue-install-") as temporary:
-            source = Path(temporary) / "source"
-            shutil.copytree(
-                ROOT,
-                source,
-                ignore=shutil.ignore_patterns(
-                    ".git", ".venv", "venv", "__pycache__", "*.egg-info",
-                    "build", "dist", ".local", ".DS_Store", "*.mp4", "*.mov", "*.m4v",
-                ),
-            )
-            subprocess.run([python, "-m", "pip", "install", "--upgrade", str(source)], check=True)
-        subprocess.run(
-            [python, str(ROOT / "scripts" / "install_photos_service.py")], check=True
-        )
+        # Build before changing the installed Python runtime or bundle.
+        native_build = tempfile.TemporaryDirectory(prefix="videoqueue-native-install-")
+        with native_build as native_temporary:
+            native_bundle = build(Path(native_temporary)/"Video Queue.app")
+            install_runtime(data, bundle, native_bundle)
 
-        (bundle / "MacOS").mkdir(parents=True, exist_ok=True)
-        (bundle / "Resources").mkdir(exist_ok=True)
-        info = {
-            "CFBundleExecutable": "VideoQueue",
-            "CFBundleIdentifier": "local.silvio.videoqueue",
-            "CFBundleName": "Video Queue",
-            "CFBundlePackageType": "APPL",
-            "CFBundleVersion": project["version"],
-            "NSHighResolutionCapable": True,
-            "NSPhotosLibraryUsageDescription": (
-                "Download selected videos, add reviewed smaller copies, and move "
-                "originals to Recently Deleted only after you approve replacement."
+
+def install_runtime(data, bundle, native_bundle):
+    environment = data / "venv"
+    subprocess.run([sys.executable, "-m", "venv", str(environment)], check=True)
+    python = str(environment / "bin" / "python")
+    # Build away from the checkout so installation leaves it clean.
+    with tempfile.TemporaryDirectory(prefix="videoqueue-install-") as temporary:
+        source = Path(temporary) / "source"
+        shutil.copytree(
+            ROOT,
+            source,
+            ignore=shutil.ignore_patterns(
+                ".git", ".venv", "venv", "__pycache__", "*.egg-info",
+                "build", "dist", ".build", ".swiftpm", ".local", ".DS_Store", "*.mp4", "*.mov", "*.m4v",
             ),
-            "NSAppleEventsUsageDescription": (
-                "Show selected items in Photos and read selected videos for 1080p conversion."
-            ),
-        }
-        launcher = (
-            '#!/bin/bash\n'
-            'export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"\n'
-            'APP_DATA="$HOME/Library/Application Support/Video Queue"\n'
-            'exec "$APP_DATA/venv/bin/python" -m video_queue "$@" '
-            '>> "$APP_DATA/launch.log" 2>&1\n'
         )
-        atomic_write(bundle / "Info.plist", plistlib.dumps(info))
-        atomic_write(bundle / "MacOS" / "VideoQueue", launcher.encode(), mode=0o755)
-        subprocess.run(["/System/Library/CoreServices/pbs", "-update"], check=True)
+        subprocess.run([python, "-m", "pip", "install", "--upgrade", str(source)], check=True)
+    subprocess.run(
+        [python, str(ROOT / "scripts" / "install_photos_service.py")], check=True
+    )
+
+    bundle.parent.mkdir(parents=True, exist_ok=True)
+    staging = bundle.with_name("Video Queue.staging-" + uuid.uuid4().hex + ".app")
+    previous = bundle.with_name("Video Queue.previous-" + uuid.uuid4().hex + ".app")
+    shutil.copytree(native_bundle, staging)
+    had_previous = bundle.exists()
+    try:
+        if had_previous:
+            os.replace(bundle, previous)
+        os.replace(staging, bundle)
+    except OSError:
+        if had_previous and previous.exists() and not bundle.exists():
+            os.replace(previous, bundle)
+        raise
+    finally:
+        if staging.exists():
+            shutil.rmtree(staging)
+    if previous.exists():
+        shutil.rmtree(previous)
+    subprocess.run(["/System/Library/CoreServices/pbs", "-update"], check=True)
 
 
 if __name__ == "__main__":

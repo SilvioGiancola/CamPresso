@@ -4,14 +4,12 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "mac-video-library-converter"
-version = "3.0.4"
+version = "4.0.0"
 description = "Review and replace Apple Photos videos with smaller compressed copies."
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
-    "tkinterdnd2==0.6.3",
     "osxphotos==0.77.2",
-    "pyobjc-framework-Photos; sys_platform == 'darwin'",
 ]
 classifiers = [
     "Operating System :: MacOS :: MacOS X",
@@ -19,6 +17,9 @@ classifiers = [
     "Programming Language :: Python :: 3.13",
     "Topic :: Multimedia :: Video :: Conversion",
 ]
+
+[project.optional-dependencies]
+legacy = ["tkinterdnd2==0.6.3", "pyobjc-framework-Photos; sys_platform == 'darwin'"]
 
 [project.urls]
 Repository = "https://github.com/SilvioGiancola/MacVideoLibraryConverter"
