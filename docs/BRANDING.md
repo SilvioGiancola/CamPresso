@@ -10,21 +10,27 @@
 
 ## Mark and palette
 
-The mark depicts a vertical press above a compressed, rounded video tile with a play symbol. It has exactly three downward motion strokes. Use the standalone transparent mark on white/cream backgrounds; use the cream-backed application icon where a dark background would obscure espresso lines. The wordmark uses native system sans-serif with a semibold name and regular tagline.
+The identity follows the supplied reference: an orange T-shaped press above a pale-cyan video capsule, a navy play symbol and a navy base. The wordmark uses heavy rounded lettering with a widely spaced tagline. Use the transparent full-color mark on white/light backgrounds and the orange-backed app icon on dark backgrounds.
+
+The primary lockup is compact and has no motion strokes. The separate vertical variant adds exactly three navy downward strokes, with a longer center stroke. The app icon uses a vivid orange rounded square, white press/base, cyan capsule and navy play symbol. A one-color navy lockup is provided for monochrome use.
 
 | Color | Hex | Use |
 | --- | --- | --- |
-| Espresso | `#2B1A16` | Press, frame and lettering |
-| Orange | `#F27A2A` | Video tile, motion strokes and UI accent |
-| Cream | `#FFF4E6` | Play symbol and icon background |
+| Navy | `#071E2A` | Base, play symbol, lettering and motion strokes |
+| Orange | `#FF5B24` | Press and UI accent |
+| Pale cyan | `#B0E8F0` | Compressed video capsule |
+| White | `#FFFFFF` | Icon press/base and light presentation background |
 
-The standalone SVG uses a 512 × 512 coordinate space. Posts are at x=108/376, with a top beam, center ram, pressing platen and bottom support. The rounded video tile is 196 × 90 units at (158, 290). Motion strokes are at x=216/256/296, ending at y=262; the middle stroke is longer. Preserve those three strokes, play symbol and compressed proportions when resizing.
+The standalone SVG uses a 512 × 512 coordinate space. A 70-unit-wide stem meets a 348 × 66 press bar. The video capsule is 316 × 102 units at (98, 242), with fully rounded ends; the base is 376 × 50 units at (68, 354). The vertical variant's strokes are at x=224/256/288, ending at y=76. Preserve the rounded triangle, capsule proportions and separation between the three layers. The app icon has an orange gradient from `#FF6A30` to `#FF4F12`.
 
 ## Assets
 
 - [Editable mark SVG](../assets/brand/campresso-mark.svg) and [transparent 1024px PNG](../assets/brand/campresso-mark.png).
-- [Editable name/tagline lockup SVG](../assets/brand/campresso-lockup.svg) and [transparent 2400px PNG](../assets/brand/campresso-lockup.png).
-- [1024px application-icon PNG](../assets/brand/campresso-icon.png), [32px preview](../assets/brand/campresso-icon-32.png) and [macOS ICNS](../assets/brand/CamPresso.icns).
+- [Editable name/tagline lockup SVG](../assets/brand/campresso-lockup.svg) and [transparent 2880px PNG](../assets/brand/campresso-lockup.png).
+- [Monochrome SVG](../assets/brand/campresso-monochrome.svg) and [PNG](../assets/brand/campresso-monochrome.png).
+- [Vertical press SVG](../assets/brand/campresso-vertical.svg) and [PNG](../assets/brand/campresso-vertical.png).
+- [Editable application-icon SVG](../assets/brand/campresso-icon.svg), [1024px PNG](../assets/brand/campresso-icon.png), [32px preview](../assets/brand/campresso-icon-32.png) and [macOS ICNS](../assets/brand/CamPresso.icns).
+- [Brand overview](../assets/brand/campresso-brand-board.png), showing the complete identity and variants.
 
 The ICNS contains standard and Retina PNG representations from 16px through 1024px. The SVG and native raster paths share the documented geometry; exports use sRGB. The lockup SVG keeps editable text, so its exact font metrics depend on the viewer; the PNG freezes the native rendering.
 

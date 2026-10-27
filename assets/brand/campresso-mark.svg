@@ -1,16 +1,11 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="title desc">
-<title id="title">CamPresso</title><desc id="desc">A vertical press compresses a video tile, with three downward motion lines.</desc>
-<g fill="#2B1A16">
-  <rect x="108" y="72" width="28" height="352" rx="14"/>
-  <rect x="376" y="72" width="28" height="352" rx="14"/>
-  <rect x="108" y="72" width="296" height="34" rx="12"/>
-  <rect x="240" y="100" width="32" height="88" rx="6"/>
-  <rect x="168" y="184" width="176" height="28" rx="12"/>
-  <rect x="108" y="404" width="296" height="30" rx="12"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="CamPresso — Action, packed lighter">
+<title>CamPresso</title>
+
+<g fill="#FF5B24">
+  <rect x="221" y="108" width="70" height="88" rx="18"/>
+  <rect x="82" y="166" width="348" height="66" rx="22"/>
 </g>
-<g id="downward-motion-lines" stroke="#F27A2A" stroke-width="8" stroke-linecap="round">
-  <path d="M216 238V262"/><path d="M256 228V262"/><path d="M296 238V262"/>
-</g>
-<rect x="158" y="290" width="196" height="90" rx="19" fill="#F27A2A"/>
-<path d="M242 312L242 358L279 335Z" fill="#FFF4E6"/>
+<rect x="98" y="242" width="316" height="102" rx="51" fill="#B0E8F0"/>
+<path d="M232 269Q232 259 241 264L283 287Q293 293 283 299L241 323Q232 329 232 319Z" fill="#071E2A"/>
+<rect x="68" y="354" width="376" height="50" rx="16" fill="#071E2A"/>
 </svg>

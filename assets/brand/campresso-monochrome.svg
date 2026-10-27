@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1440 512" role="img" aria-label="CamPresso — Action, packed lighter">
+<title>CamPresso</title>
+
+<g fill="#071E2A">
+  <rect x="221" y="108" width="70" height="88" rx="18"/>
+  <rect x="82" y="166" width="348" height="66" rx="22"/>
+</g>
+<rect x="98" y="242" width="316" height="102" rx="51" fill="#071E2A"/>
+<path d="M232 269Q232 259 241 264L283 287Q293 293 283 299L241 323Q232 329 232 319Z" fill="#FFFFFF"/>
+<rect x="68" y="354" width="376" height="50" rx="16" fill="#071E2A"/><text x="500" y="278" fill="#071E2A" font-family="SF Pro Rounded, Arial Rounded MT Bold, Helvetica, sans-serif" font-size="154" font-weight="900" letter-spacing="-5">CamPresso</text>
+<text x="600" y="350" fill="#071E2A" font-family="-apple-system, BlinkMacSystemFont, Helvetica, Arial, sans-serif" font-size="44" letter-spacing="10">Action, packed lighter</text>
+</svg>

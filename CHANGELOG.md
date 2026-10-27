@@ -1,6 +1,12 @@
 # Changelog
 
-## Unreleased — 4.1.1
+## Unreleased — 4.1.2
+
+- Refine the visual identity to an orange press, pale-cyan video capsule and dark-navy base with a heavy rounded wordmark.
+- Add monochrome and vertical-motion variants, an orange app icon, editable SVGs and a brand overview image.
+- Retain the tagline “Action, packed lighter” across the app and brand exports.
+
+## 4.1.1
 
 - Load AVFoundation asset/track properties asynchronously and use macOS 26 video-composition configurations while preserving Photos rendering instructions.
 - Keep frame encoding and bounded watchdog waits on a dedicated worker; use scoped native locks and the asynchronous export API.
