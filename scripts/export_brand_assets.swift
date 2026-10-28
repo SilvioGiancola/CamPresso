@@ -12,16 +12,15 @@ let tagline = "Action, packed lighter"
 
 enum Artwork { case mark, lockup, monochrome, vertical, icon, board }
 
-func geometry(monochrome: Bool = false, icon: Bool = false, motion: Bool = false) -> String {
-    let top = monochrome ? "#071E2A" : icon ? "#FFFFFF" : "#FF5B24"
-    let base = icon ? "#FFFFFF" : "#071E2A"
+func geometry(monochrome: Bool = false) -> String {
+    let top = monochrome ? "#071E2A" : "#FF5B24"
     let tile = monochrome ? "#071E2A" : "#B0E8F0"
     let play = monochrome ? "#FFFFFF" : "#071E2A"
-    let strokes = motion ? """
+    let strokes = """
     <g id="downward-motion-lines" stroke="#071E2A" stroke-width="10" stroke-linecap="round">
       <path d="M224 48V76"/><path d="M256 20V76"/><path d="M288 48V76"/>
     </g>
-    """ : ""
+    """
     return """
     \(strokes)
     <g fill="\(top)">
@@ -30,7 +29,7 @@ func geometry(monochrome: Bool = false, icon: Bool = false, motion: Bool = false
     </g>
     <rect x="98" y="242" width="316" height="102" rx="51" fill="\(tile)"/>
     <path d="M232 269Q232 259 241 264L283 287Q293 293 283 299L241 323Q232 329 232 319Z" fill="\(play)"/>
-    <rect x="68" y="354" width="376" height="50" rx="16" fill="\(base)"/>
+    <rect x="68" y="354" width="376" height="50" rx="16" fill="#071E2A"/>
     """
 }
 
@@ -42,11 +41,8 @@ func lettering() -> String {
 }
 
 let iconGeometry = """
-<defs><linearGradient id="app-orange" x1="0" y1="0" x2="1" y2="1">
-  <stop offset="0" stop-color="#FF6A30"/><stop offset="1" stop-color="#FF4F12"/>
-</linearGradient></defs>
-<rect x="12" y="12" width="488" height="488" rx="110" fill="url(#app-orange)"/>
-<g transform="translate(15 17) scale(.94)">\(geometry(icon: true))</g>
+<rect x="12" y="12" width="488" height="488" rx="110" fill="#FFFFFF"/>
+<g transform="translate(15 59) scale(.94)">\(geometry())</g>
 """
 
 func svg(_ name: String, width: Int = 512, height: Int = 512, body: String) throws {
@@ -65,14 +61,12 @@ func rectangle(_ context: CGContext, _ rect: CGRect, radius: CGFloat, color: NSC
     context.fillPath()
 }
 
-func press(_ context: CGContext, monochrome: Bool = false, icon: Bool = false, motion: Bool = false) {
-    if motion {
-        context.setStrokeColor(navy.cgColor); context.setLineWidth(10); context.setLineCap(.round)
-        for (x, y) in [(224.0, 48.0), (256, 20), (288, 48)] {
-            context.move(to: .init(x: x, y: y)); context.addLine(to: .init(x: x, y: 76)); context.strokePath()
-        }
+func press(_ context: CGContext, monochrome: Bool = false) {
+    context.setStrokeColor(navy.cgColor); context.setLineWidth(10); context.setLineCap(.round)
+    for (x, y) in [(224.0, 48.0), (256, 20), (288, 48)] {
+        context.move(to: .init(x: x, y: y)); context.addLine(to: .init(x: x, y: 76)); context.strokePath()
     }
-    let top = monochrome ? navy : icon ? NSColor.white : orange
+    let top = monochrome ? navy : orange
     rectangle(context, .init(x: 221, y: 108, width: 70, height: 88), radius: 18, color: top)
     rectangle(context, .init(x: 82, y: 166, width: 348, height: 66), radius: 22, color: top)
     rectangle(context, .init(x: 98, y: 242, width: 316, height: 102), radius: 51, color: monochrome ? navy : cyan)
@@ -84,7 +78,7 @@ func press(_ context: CGContext, monochrome: Bool = false, icon: Bool = false, m
     context.addLine(to: .init(x: 241, y: 323))
     context.addQuadCurve(to: .init(x: 232, y: 319), control: .init(x: 232, y: 329))
     context.closePath(); context.fillPath()
-    rectangle(context, .init(x: 68, y: 354, width: 376, height: 50), radius: 16, color: icon ? .white : navy)
+    rectangle(context, .init(x: 68, y: 354, width: 376, height: 50), radius: 16, color: navy)
 }
 
 func text(_ value: String, context: CGContext, x: CGFloat, y: CGFloat,
@@ -104,16 +98,9 @@ func lockup(_ context: CGContext, monochrome: Bool = false) {
 }
 
 func appIcon(_ context: CGContext) {
-    context.saveGState()
-    context.addPath(CGPath(roundedRect: .init(x: 12, y: 12, width: 488, height: 488), cornerWidth: 110, cornerHeight: 110, transform: nil))
-    context.clip()
-    let colors = [NSColor(srgbRed: 1, green: 106/255, blue: 48/255, alpha: 1).cgColor,
-                  NSColor(srgbRed: 1, green: 79/255, blue: 18/255, alpha: 1).cgColor] as CFArray
-    let gradient = CGGradient(colorsSpace: CGColorSpace(name: CGColorSpace.sRGB), colors: colors, locations: [0, 1])!
-    context.drawLinearGradient(gradient, start: .zero, end: .init(x: 512, y: 512), options: [.drawsBeforeStartLocation, .drawsAfterEndLocation])
-    context.restoreGState()
-    context.saveGState(); context.translateBy(x: 15, y: 17); context.scaleBy(x: 0.94, y: 0.94)
-    press(context, icon: true); context.restoreGState()
+    rectangle(context, .init(x: 12, y: 12, width: 488, height: 488), radius: 110, color: .white)
+    context.saveGState(); context.translateBy(x: 15, y: 59); context.scaleBy(x: 0.94, y: 0.94)
+    press(context); context.restoreGState()
 }
 
 func positioned(_ context: CGContext, x: CGFloat, y: CGFloat, scale: CGFloat, draw: () -> Void) {
@@ -131,10 +118,9 @@ func export(_ name: String, width: Int, height: Int, artwork: Artwork, to root: 
     context.clear(.init(x: 0, y: 0, width: width, height: height))
     context.translateBy(x: 0, y: CGFloat(height)); context.scaleBy(x: CGFloat(width)/viewWidth, y: -CGFloat(height)/viewHeight)
     switch artwork {
-    case .mark: press(context)
+    case .mark, .vertical: press(context)
     case .lockup: lockup(context)
     case .monochrome: lockup(context, monochrome: true)
-    case .vertical: press(context, motion: true)
     case .icon: appIcon(context)
     case .board:
         rectangle(context, .init(x: 0, y: 0, width: 1600, height: 1024), radius: 0, color: .white)
@@ -147,10 +133,10 @@ func export(_ name: String, width: Int, height: Int, artwork: Artwork, to root: 
         }
         text("APP ICON", context: context, x: 70, y: 575, size: 18, tracking: 4)
         text("MONOCHROME", context: context, x: 545, y: 575, size: 18, tracking: 4)
-        text("VERTICAL PRESS", context: context, x: 1095, y: 575, size: 18, tracking: 4)
+        text("PRIMARY MARK", context: context, x: 1095, y: 575, size: 18, tracking: 4)
         positioned(context, x: 83, y: 630, scale: 0.67) { appIcon(context) }
         positioned(context, x: 525, y: 720, scale: 0.36) { lockup(context, monochrome: true) }
-        positioned(context, x: 1110, y: 620, scale: 0.78) { press(context, motion: true) }
+        positioned(context, x: 1110, y: 620, scale: 0.78) { press(context) }
     }
     guard let image = context.makeImage(), let bytes = NSBitmapImageRep(cgImage: image).representation(using: .png, properties: [:]) else {
         throw NSError(domain: "CamPresso.Brand", code: 2)
@@ -161,7 +147,8 @@ func export(_ name: String, width: Int, height: Int, artwork: Artwork, to root: 
 try svg("campresso-mark.svg", body: geometry())
 try svg("campresso-lockup.svg", width: 1440, body: geometry()+lettering())
 try svg("campresso-monochrome.svg", width: 1440, body: geometry(monochrome: true)+lettering())
-try svg("campresso-vertical.svg", body: geometry(motion: true))
+// Retain the vertical filename as a compatible alias of the primary mark.
+try svg("campresso-vertical.svg", body: geometry())
 try svg("campresso-icon.svg", body: iconGeometry)
 try export("campresso-mark.png", width: 1024, height: 1024, artwork: .mark)
 try export("campresso-lockup.png", width: 2880, height: 1024, artwork: .lockup)

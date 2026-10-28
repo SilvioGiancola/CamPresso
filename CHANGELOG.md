@@ -1,6 +1,11 @@
 # Changelog
 
-## Unreleased — 4.1.3
+## Unreleased — 4.1.4
+
+- Make the three-line vertical press the primary logo across the app, website, README, lockups, monochrome exports and social artwork.
+- Use the full-color orange/cyan/navy mark on a white app-icon background; regenerate all PNG sizes and the bundled macOS ICNS.
+
+## 4.1.3
 
 - Restore sharp video posters with high-quality PhotoKit requests sized for the display scale, background decoding, cancellation and a bounded memory cache.
 - Keep thumbnail requests stable across processing stages; retry missing posters after download and refresh them after a catalog refresh.

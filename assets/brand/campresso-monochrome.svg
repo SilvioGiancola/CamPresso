@@ -1,6 +1,8 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1440 512" role="img" aria-label="CamPresso — Action, packed lighter">
 <title>CamPresso</title>
-
+<g id="downward-motion-lines" stroke="#071E2A" stroke-width="10" stroke-linecap="round">
+  <path d="M224 48V76"/><path d="M256 20V76"/><path d="M288 48V76"/>
+</g>
 <g fill="#071E2A">
   <rect x="221" y="108" width="70" height="88" rx="18"/>
   <rect x="82" y="166" width="348" height="66" rx="22"/>

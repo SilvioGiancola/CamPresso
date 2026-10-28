@@ -1,6 +1,6 @@
 # CamPresso
 
-<img src="assets/brand/campresso-icon.png" width="112" alt="CamPresso press and video icon">
+<img src="assets/brand/campresso-icon.png" width="112" alt="CamPresso three-line press and video icon">
 
 **Action, packed lighter**
 
