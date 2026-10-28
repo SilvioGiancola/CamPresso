@@ -10,6 +10,8 @@ Quit CamPresso and the previous app, then double-click `Install.command` or run 
 
 Open the app through Finder or Spotlight. The old Tk interface is no longer the application entry point.
 
+CamPresso uses a dark navy interface, with matching Settings, Details and comparison windows. Orange actions and cyan accents share the colors used in its app icon and branding. Video playback retains its original colors.
+
 The new identity can require Photos, Full Disk Access and Automation permissions again. On first launch the library is blank until you choose it.
 
 ## First launch and Settings

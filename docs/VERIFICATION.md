@@ -60,3 +60,12 @@ No test or live-library execution is implied by this checklist.
 - Verify cache/concurrency bounds, correct batch counts, stable gallery ordering and prompt Stop/Close behavior under a mixed batch.
 
 These interactive scenarios have not been executed as part of the build/static checks.
+
+## Dark appearance acceptance scenarios
+
+- With macOS in either Light or Dark mode, check the gallery, Settings, Details, About, native dialogs and comparison/playback window chrome use the app's dark appearance.
+- Check white/cyan text and navy labels on orange actions, including focused, selected and disabled controls. Retain native status meanings and keyboard focus indicators.
+- Check all three white motion lines and the white base remain visible on the navy icon and dark-background mark, including small icon sizes.
+- Confirm the theme does not tint thumbnail or playback pixels; the comparison stage stays black and media color verification remains unchanged.
+
+App builds and asset/site inspection do not constitute execution of these live application scenarios.

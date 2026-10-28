@@ -1,6 +1,12 @@
 # Changelog
 
-## Unreleased — 4.1.4
+## Unreleased — 4.1.5
+
+- Restore a dark navy app/icon background and align the navy, orange, cyan and surface colors across app windows, artwork and the website's app illustration.
+- Add dark-background logo/lockup exports with white motion lines, base and lettering; retain the three-line press and the orange/cyan elements.
+- Apply dark appearance to Settings, Details, comparison/playback windows and native dialogs; use readable navy labels on orange primary actions.
+
+## 4.1.4
 
 - Make the three-line vertical press the primary logo across the app, website, README, lockups, monochrome exports and social artwork.
 - Use the full-color orange/cyan/navy mark on a white app-icon background; regenerate all PNG sizes and the bundled macOS ICNS.

@@ -215,7 +215,7 @@ struct ReviewView: View {
                 Button("Compressed") { session.divider = 0 }
                 Spacer()
                 Button("Revert · Keep Original") { session.decide("revert") }.disabled(!session.ready || session.deciding)
-                Button("Keep Compressed") { session.decide("keep") }.buttonStyle(.borderedProminent).disabled(!session.ready || session.deciding)
+                Button("Keep Compressed") { session.decide("keep") }.buttonStyle(.borderedProminent).foregroundStyle(Brand.background).disabled(!session.ready || session.deciding)
             }
             if let error = session.error { Text(error).font(.callout).foregroundStyle(.orange).frame(maxWidth: .infinity, alignment: .leading) }
             ForEach(session.review["warnings"] as? [String] ?? [], id: \.self) { Text($0).font(.caption).foregroundStyle(.secondary).frame(maxWidth: .infinity, alignment: .leading) }

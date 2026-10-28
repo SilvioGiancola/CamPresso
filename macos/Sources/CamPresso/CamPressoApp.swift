@@ -4,6 +4,9 @@ import SwiftUI
 @MainActor
 final class ApplicationDelegate: NSObject, NSApplicationDelegate {
     weak var model: AppModel?
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        NSApp.appearance = NSAppearance(named: .darkAqua)
+    }
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         guard let model else { return .terminateNow }
         if model.closing { return .terminateCancel }
@@ -38,7 +41,7 @@ struct CamPressoApp: App {
     @Environment(\.openSettings) private var openSettings
     var body: some Scene {
         Window("CamPresso", id: "main") {
-            LibraryView().environmentObject(model).tint(Brand.accent).background(MainWindowHook(model: model))
+            LibraryView().environmentObject(model).campressoTheme().background(MainWindowHook(model: model))
                 .onAppear { delegate.model = model; model.start() }
         }
         .defaultSize(width: 1160, height: 790)
@@ -57,6 +60,6 @@ struct CamPressoApp: App {
                 Button("Open Logs and Recovery") { NSWorkspace.shared.open(model.data) }
             }
         }
-        Settings { SettingsView().environmentObject(model).tint(Brand.accent) }
+        Settings { SettingsView().environmentObject(model).campressoTheme() }
     }
 }

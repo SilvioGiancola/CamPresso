@@ -85,10 +85,11 @@ struct SettingsView: View {
                 Button("Cancel") { NSApp.keyWindow?.close() }
                 Spacer()
                 if saving { ProgressView().controlSize(.small) }
-                Button("Save", action: save).buttonStyle(.borderedProminent).disabled(saving || !model.connected)
+                Button("Save", action: save).buttonStyle(.borderedProminent).foregroundStyle(Brand.background).disabled(saving || !model.connected)
             }
         }
         .formStyle(.grouped).padding(8).frame(width: 640, height: 690)
+        .scrollContentBackground(.hidden)
         .onAppear(perform: load)
         .onChange(of: library) { old, new in if old != new && new != model.library { personal = false } }
     }

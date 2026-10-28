@@ -35,7 +35,7 @@ def build(destination, disable_swift_sandbox=False):
         (contents/'MacOS').mkdir(parents=True)
         (contents/'Resources').mkdir()
         shutil.copy2(Path(binary_path)/'CamPresso', contents/'MacOS'/'CamPresso')
-        for filename in ('CamPresso.icns', 'campresso-mark.png'):
+        for filename in ('CamPresso.icns', 'campresso-mark.png', 'campresso-mark-dark.png'):
             shutil.copy2(ROOT/'assets'/'brand'/filename, contents/'Resources'/filename)
         info = {
             'CFBundleExecutable': 'CamPresso', 'CFBundleIdentifier': 'local.silvio.campresso',

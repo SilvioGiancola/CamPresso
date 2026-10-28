@@ -18,14 +18,14 @@ struct LibraryView: View {
                 HStack {
                     Label("Allow Full Photos Access to prepare, compare and save videos.", systemImage: "photo.badge.checkmark")
                     Spacer(); Button("Allow Photos Access") { model.allowPhotos() }.disabled(model.authorizing)
-                }.padding(12).background(.blue.opacity(0.08))
+                }.padding(12).background(Brand.cyan.opacity(0.08))
             } else if !model.setupComplete {
                 HStack {
                     VStack(alignment: .leading, spacing: 4) {
                         Label("Choose your personal System Photo Library and conversion settings.", systemImage: "gearshape")
                     }
                     Spacer(); Button("Open Settings…") { openSettings() }
-                }.padding(12).background(.blue.opacity(0.08))
+                }.padding(12).background(Brand.cyan.opacity(0.08))
             }
             if !model.previousWork.isEmpty {
                 HStack {
@@ -43,7 +43,7 @@ struct LibraryView: View {
                 gallery
                 if inspector {
                     Divider()
-                    summary.frame(width: 245).padding(16)
+                    summary.frame(width: 245).padding(16).background(Brand.surface)
                 }
             }
             Divider()
@@ -58,7 +58,7 @@ struct LibraryView: View {
             }
         }
         .searchable(text: $model.search, placement: .toolbar, prompt: "Search videos")
-        .sheet(item: $details) { row in DetailView(row: row).environmentObject(model) }
+        .sheet(item: $details) { row in DetailView(row: row).environmentObject(model).campressoTheme() }
         .alert("CamPresso", isPresented: Binding(get: { model.notice != nil }, set: { if !$0 { model.notice = nil } })) { Button("OK") { model.notice = nil } } message: { Text(model.notice ?? "") }
         .overlay { if model.closing { ZStack { Color.black.opacity(0.15); ProgressView("Stopping work and finishing Photos changes…").padding(25).background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14)) } } }
         .onReceive(NotificationCenter.default.publisher(for: .init("ToggleSummary"))) { _ in inspector.toggle() }
@@ -87,7 +87,7 @@ struct LibraryView: View {
                 Toggle(isOn: $model.favoritesOnly) { Image(systemName: "heart.fill") }.toggleStyle(.button).help("Favorites only")
                 Toggle("Local only", isOn: $model.localOnly).toggleStyle(.button)
             }
-        }.padding(.horizontal, 16).padding(.vertical, 12)
+        }.padding(.horizontal, 16).padding(.vertical, 12).background(Brand.surface)
     }
     private func count(_ section: LibrarySection) -> String {
         switch section {
@@ -124,7 +124,7 @@ struct LibraryView: View {
                     }
                 }.padding(16)
             }
-        }.background(Color(nsColor: .windowBackgroundColor))
+        }.background(Brand.background)
     }
     private var summary: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -168,13 +168,13 @@ struct LibraryView: View {
                 }
                 if !model.chosen.isEmpty && model.chosen.allSatisfy({ $0.state == "Ready to review" }) {
                     Button("Revert Selected…") { model.decideSelected("revert") }
-                    Button("Keep Compressed…") { model.decideSelected("keep") }.buttonStyle(.borderedProminent)
+                    Button("Keep Compressed…") { model.decideSelected("keep") }.buttonStyle(.borderedProminent).foregroundStyle(Brand.background)
                 } else {
-                    Button("Compress \(model.compressionTargets.count) video(s)") { model.compress() }.buttonStyle(.borderedProminent)
+                    Button("Compress \(model.compressionTargets.count) video(s)") { model.compress() }.buttonStyle(.borderedProminent).foregroundStyle(Brand.background)
                         .disabled(!model.setupComplete || !model.connected || model.compressionTargets.isEmpty || model.closing)
                 }
             }
-        }.padding(12)
+        }.padding(12).background(Brand.surface)
     }
     private func banner(_ text: String, icon: String, color: Color) -> some View {
         HStack { Label(text, systemImage: icon).font(.callout); Spacer(); Button("Settings…") { openSettings() } }.padding(12).background(color.opacity(0.1))
@@ -198,7 +198,7 @@ struct VideoCard: View {
                 VideoThumbnail(identifier: row.thumbnailID, revision: thumbnailRevision,
                                downloaded: row.raw["preview_ready"] as? Bool == true)
                 HStack(spacing: 7) {
-                    Image(systemName: selected ? "checkmark.circle.fill" : "circle").foregroundStyle(selected ? Color.accentColor : .white)
+                    Image(systemName: selected ? "checkmark.circle.fill" : "circle").foregroundStyle(selected ? Brand.accent : .white)
                     if row.favorite { Image(systemName: "heart.fill").foregroundStyle(.pink) }
                     if row.shared { Image(systemName: "person.2.fill") }
                     Spacer()
@@ -219,8 +219,9 @@ struct VideoCard: View {
                 Text(row.detail).font(.caption2).foregroundStyle(.secondary).lineLimit(2).help(row.detail)
             }
         }
-        .padding(9).background(selected ? Color.accentColor.opacity(0.09) : Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 12))
-        .overlay(RoundedRectangle(cornerRadius: 12).stroke(selected ? Color.accentColor : Color.secondary.opacity(0.15), lineWidth: selected ? 2 : 1))
+        .padding(9).background(selected ? Brand.accent.opacity(0.08) : .clear, in: RoundedRectangle(cornerRadius: 12))
+        .background(Brand.surface, in: RoundedRectangle(cornerRadius: 12))
+        .overlay(RoundedRectangle(cornerRadius: 12).stroke(selected ? Brand.accent : Color.secondary.opacity(0.15), lineWidth: selected ? 2 : 1))
         .accessibilityElement(children: .combine).accessibilityLabel("\(row.name), \(row.state), \(row.local ? "local" : "stored in iCloud")")
     }
 }

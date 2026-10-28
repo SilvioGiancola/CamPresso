@@ -1,7 +1,9 @@
 @charset "UTF-8";
 :root {
   color-scheme: light;
-  --ink: #071e2a;
+  --navy: #071e2a;
+  --surface: #122f3d;
+  --ink: var(--navy);
   --muted: #53616a;
   --orange: #ff5b24;
   --orange-dark: #c43d11;
@@ -321,9 +323,10 @@ small {
 }
 
 .app-preview {
-  border: 1px solid #d3dbdb;
+  border: 1px solid var(--surface);
   border-radius: 15px;
-  background: #fff;
+  background: var(--navy);
+  color: var(--white);
   box-shadow: 0 28px 65px -25px #16394245,0 3px 9px #071e2a0a;
   overflow: hidden;
   transform: rotate(-1.5deg);
@@ -336,8 +339,8 @@ small {
   gap: 20px;
   height: 40px;
   padding-inline: 15px;
-  background: #f2f3f3;
-  border-bottom: 1px solid #e6e9e9;
+  background: var(--surface);
+  border-bottom: 1px solid #ffffff2e;
   font-size: .65rem;
   font-weight: 650;
 }
@@ -364,7 +367,7 @@ small {
 
 .window-symbol {
   font-size: 1rem;
-  color: #74848c;
+  color: var(--cyan);
 }
 
 .preview-toolbar {
@@ -378,7 +381,7 @@ small {
 
 .preview-filter {
   font-size: .62rem;
-  border: 1px solid var(--line);
+  border: 1px solid #ffffff2e;
   padding: 5px 9px;
   border-radius: 6px;
   font-weight: 550;
@@ -386,7 +389,7 @@ small {
 
 .preview-filter span {
   margin-left: 6px;
-  color: var(--orange-dark);
+  color: var(--orange);
 }
 
 .preview-grid {
@@ -410,13 +413,13 @@ small {
 }
 
 .mini-status {
-  color: #165d71;
+  color: var(--cyan);
   font-size: .57rem;
   display: inline-block;
 }
 
 .mini-status.neutral {
-  color: #687680;
+  color: #b3c3ca;
 }
 
 .scene {
@@ -424,7 +427,7 @@ small {
   position: relative;
   overflow: hidden;
   border-radius: 8px;
-  background: #b0e8f0;
+  background: var(--cyan);
 }
 
 .scene::before,.scene::after {
@@ -499,8 +502,8 @@ small {
   margin: 0 12px 13px;
   padding: 16px;
   border-radius: 10px;
-  background: #f4f9f8;
-  border: 1px solid #deece9;
+  background: var(--surface);
+  border: 1px solid #ffffff2e;
 }
 
 .result-heading {
@@ -518,7 +521,7 @@ small {
 .result-heading div>span {
   display: block;
   font-size: .6rem;
-  color: var(--muted);
+  color: #b3c3ca;
   margin-top: 3px;
 }
 
@@ -529,8 +532,8 @@ small {
   display: grid;
   place-items: center;
   border-radius: 50%;
-  background: #c8e8df;
-  color: #256551;
+  background: var(--cyan);
+  color: var(--navy);
 }
 
 .size-comparison {
@@ -549,7 +552,7 @@ small {
   display: block;
   font-weight: 450;
   letter-spacing: 0;
-  color: var(--muted);
+  color: #b3c3ca;
   font-size: .59rem;
   margin-bottom: 5px;
 }
@@ -562,12 +565,13 @@ small {
 
 .size-arrow {
   font-weight: 300;
-  color: #718b91;
+  color: var(--cyan);
   font-size: 1.3rem;
 }
 
 .savings-badge {
   background: var(--cyan);
+  color: var(--navy);
   font-size: 1.25rem;
   line-height: 1;
   padding: 9px 14px;
@@ -590,16 +594,16 @@ small {
 }
 
 .preview-decisions>span {
-  border: 1px solid #cfdcda;
+  border: 1px solid #ffffff2e;
   padding: 8px 12px;
   border-radius: 5px;
-  background: white;
+  background: var(--navy);
 }
 
 .preview-decisions>span+span {
-  background: var(--ink);
-  color: white;
-  border-color: var(--ink);
+  background: var(--orange);
+  color: var(--navy);
+  border-color: var(--orange);
   font-weight: 600;
 }
 

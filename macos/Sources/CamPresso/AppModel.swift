@@ -33,11 +33,11 @@ struct VideoRow: Identifiable {
     }
     var color: Color {
         switch state {
-        case "Ready to review": return .blue
+        case "Ready to review": return Brand.cyan
         case "Completed": return .green
         case "Needs attention", "Error": return .red
         case "Waiting for connection", "Waiting for space", "Paused": return .orange
-        default: return processing ? .orange : .secondary
+        default: return processing ? Brand.accent : .secondary
         }
     }
     var savingText: String {
@@ -392,7 +392,7 @@ final class AppModel: ObservableObject {
             do {
                 let value = try await request("review.open", ["job_id": row.jobID])
                 let session = ReviewSession(model: self, initial: value)
-                let controller = NSHostingController(rootView: ReviewView(session: session))
+                let controller = NSHostingController(rootView: ReviewView(session: session).campressoTheme())
                 let window = NSWindow(contentViewController: controller)
                 window.title = "Review — \(row.name)"; window.setContentSize(.init(width: 1020, height: 720)); window.center()
                 window.isReleasedWhenClosed = false; reviewWindow?.close(); reviewWindow = window
@@ -434,7 +434,7 @@ final class AppModel: ObservableObject {
             do {
                 let item = try await AssetRepository.shared.player(identifier)
                 let player = AVPlayer(playerItem: item)
-                let controller = NSHostingController(rootView: PlaybackView(player: player))
+                let controller = NSHostingController(rootView: PlaybackView(player: player).campressoTheme())
                 let window = NSWindow(contentViewController: controller); window.title = row.name
                 window.setContentSize(.init(width: 900, height: 600)); window.center(); window.isReleasedWhenClosed = false
                 playbackWindows.append(window); window.makeKeyAndOrderFront(nil); player.play()

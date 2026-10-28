@@ -10,14 +10,15 @@ let orange = NSColor(srgbRed: 1, green: 91/255, blue: 36/255, alpha: 1)
 let cyan = NSColor(srgbRed: 176/255, green: 232/255, blue: 240/255, alpha: 1)
 let tagline = "Action, packed lighter"
 
-enum Artwork { case mark, lockup, monochrome, vertical, icon, board }
+enum Artwork { case mark, darkMark, lockup, darkLockup, monochrome, vertical, icon, board }
 
-func geometry(monochrome: Bool = false) -> String {
-    let top = monochrome ? "#071E2A" : "#FF5B24"
-    let tile = monochrome ? "#071E2A" : "#B0E8F0"
-    let play = monochrome ? "#FFFFFF" : "#071E2A"
+func geometry(monochrome: Bool = false, dark: Bool = false) -> String {
+    let ink = dark ? "#FFFFFF" : "#071E2A"
+    let top = monochrome ? ink : "#FF5B24"
+    let tile = monochrome ? ink : "#B0E8F0"
+    let play = monochrome && !dark ? "#FFFFFF" : "#071E2A"
     let strokes = """
-    <g id="downward-motion-lines" stroke="#071E2A" stroke-width="10" stroke-linecap="round">
+    <g id="downward-motion-lines" stroke="\(ink)" stroke-width="10" stroke-linecap="round">
       <path d="M224 48V76"/><path d="M256 20V76"/><path d="M288 48V76"/>
     </g>
     """
@@ -29,20 +30,21 @@ func geometry(monochrome: Bool = false) -> String {
     </g>
     <rect x="98" y="242" width="316" height="102" rx="51" fill="\(tile)"/>
     <path d="M232 269Q232 259 241 264L283 287Q293 293 283 299L241 323Q232 329 232 319Z" fill="\(play)"/>
-    <rect x="68" y="354" width="376" height="50" rx="16" fill="#071E2A"/>
+    <rect x="68" y="354" width="376" height="50" rx="16" fill="\(ink)"/>
     """
 }
 
-func lettering() -> String {
-    """
-    <text x="500" y="278" fill="#071E2A" font-family="SF Pro Rounded, Arial Rounded MT Bold, Helvetica, sans-serif" font-size="154" font-weight="900" letter-spacing="-5">CamPresso</text>
-    <text x="600" y="350" fill="#071E2A" font-family="-apple-system, BlinkMacSystemFont, Helvetica, Arial, sans-serif" font-size="44" letter-spacing="10">\(tagline)</text>
+func lettering(dark: Bool = false) -> String {
+    let ink = dark ? "#FFFFFF" : "#071E2A"
+    return """
+    <text x="500" y="278" fill="\(ink)" font-family="SF Pro Rounded, Arial Rounded MT Bold, Helvetica, sans-serif" font-size="154" font-weight="900" letter-spacing="-5">CamPresso</text>
+    <text x="600" y="350" fill="\(ink)" font-family="-apple-system, BlinkMacSystemFont, Helvetica, Arial, sans-serif" font-size="44" letter-spacing="10">\(tagline)</text>
     """
 }
 
 let iconGeometry = """
-<rect x="12" y="12" width="488" height="488" rx="110" fill="#FFFFFF"/>
-<g transform="translate(15 59) scale(.94)">\(geometry())</g>
+<rect x="12" y="12" width="488" height="488" rx="110" fill="#071E2A"/>
+<g transform="translate(15 59) scale(.94)">\(geometry(dark: true))</g>
 """
 
 func svg(_ name: String, width: Int = 512, height: Int = 512, body: String) throws {
@@ -61,16 +63,17 @@ func rectangle(_ context: CGContext, _ rect: CGRect, radius: CGFloat, color: NSC
     context.fillPath()
 }
 
-func press(_ context: CGContext, monochrome: Bool = false) {
-    context.setStrokeColor(navy.cgColor); context.setLineWidth(10); context.setLineCap(.round)
+func press(_ context: CGContext, monochrome: Bool = false, dark: Bool = false) {
+    let ink: NSColor = dark ? .white : navy
+    context.setStrokeColor(ink.cgColor); context.setLineWidth(10); context.setLineCap(.round)
     for (x, y) in [(224.0, 48.0), (256, 20), (288, 48)] {
         context.move(to: .init(x: x, y: y)); context.addLine(to: .init(x: x, y: 76)); context.strokePath()
     }
-    let top = monochrome ? navy : orange
+    let top = monochrome ? ink : orange
     rectangle(context, .init(x: 221, y: 108, width: 70, height: 88), radius: 18, color: top)
     rectangle(context, .init(x: 82, y: 166, width: 348, height: 66), radius: 22, color: top)
-    rectangle(context, .init(x: 98, y: 242, width: 316, height: 102), radius: 51, color: monochrome ? navy : cyan)
-    context.setFillColor((monochrome ? NSColor.white : navy).cgColor)
+    rectangle(context, .init(x: 98, y: 242, width: 316, height: 102), radius: 51, color: monochrome ? ink : cyan)
+    context.setFillColor((monochrome && !dark ? NSColor.white : navy).cgColor)
     context.move(to: .init(x: 232, y: 269))
     context.addQuadCurve(to: .init(x: 241, y: 264), control: .init(x: 232, y: 259))
     context.addLine(to: .init(x: 283, y: 287))
@@ -78,29 +81,30 @@ func press(_ context: CGContext, monochrome: Bool = false) {
     context.addLine(to: .init(x: 241, y: 323))
     context.addQuadCurve(to: .init(x: 232, y: 319), control: .init(x: 232, y: 329))
     context.closePath(); context.fillPath()
-    rectangle(context, .init(x: 68, y: 354, width: 376, height: 50), radius: 16, color: navy)
+    rectangle(context, .init(x: 68, y: 354, width: 376, height: 50), radius: 16, color: ink)
 }
 
 func text(_ value: String, context: CGContext, x: CGFloat, y: CGFloat,
-          size: CGFloat, weight: NSFont.Weight = .regular, tracking: CGFloat = 0, rounded: Bool = false) {
+          size: CGFloat, weight: NSFont.Weight = .regular, tracking: CGFloat = 0, rounded: Bool = false, color: NSColor = navy) {
     let system = NSFont.systemFont(ofSize: size, weight: weight)
     let font = rounded ? system.fontDescriptor.withDesign(.rounded).flatMap { NSFont(descriptor: $0, size: size) } ?? system : system
     NSGraphicsContext.saveGraphicsState()
     NSGraphicsContext.current = NSGraphicsContext(cgContext: context, flipped: true)
-    (value as NSString).draw(at: .init(x: x, y: y), withAttributes: [.font: font, .foregroundColor: navy, .kern: tracking])
+    (value as NSString).draw(at: .init(x: x, y: y), withAttributes: [.font: font, .foregroundColor: color, .kern: tracking])
     NSGraphicsContext.restoreGraphicsState()
 }
 
-func lockup(_ context: CGContext, monochrome: Bool = false) {
-    press(context, monochrome: monochrome)
-    text("CamPresso", context: context, x: 500, y: 120, size: 154, weight: .black, tracking: -5, rounded: true)
-    text(tagline, context: context, x: 600, y: 305, size: 44, tracking: 10)
+func lockup(_ context: CGContext, monochrome: Bool = false, dark: Bool = false) {
+    press(context, monochrome: monochrome, dark: dark)
+    let ink: NSColor = dark ? .white : navy
+    text("CamPresso", context: context, x: 500, y: 120, size: 154, weight: .black, tracking: -5, rounded: true, color: ink)
+    text(tagline, context: context, x: 600, y: 305, size: 44, tracking: 10, color: ink)
 }
 
 func appIcon(_ context: CGContext) {
-    rectangle(context, .init(x: 12, y: 12, width: 488, height: 488), radius: 110, color: .white)
+    rectangle(context, .init(x: 12, y: 12, width: 488, height: 488), radius: 110, color: navy)
     context.saveGState(); context.translateBy(x: 15, y: 59); context.scaleBy(x: 0.94, y: 0.94)
-    press(context); context.restoreGState()
+    press(context, dark: true); context.restoreGState()
 }
 
 func positioned(_ context: CGContext, x: CGFloat, y: CGFloat, scale: CGFloat, draw: () -> Void) {
@@ -109,7 +113,7 @@ func positioned(_ context: CGContext, x: CGFloat, y: CGFloat, scale: CGFloat, dr
 }
 
 func export(_ name: String, width: Int, height: Int, artwork: Artwork, to root: URL? = nil) throws {
-    let viewWidth: CGFloat = artwork == .board ? 1600 : artwork == .lockup || artwork == .monochrome ? 1440 : 512
+    let viewWidth: CGFloat = artwork == .board ? 1600 : artwork == .lockup || artwork == .darkLockup || artwork == .monochrome ? 1440 : 512
     let viewHeight: CGFloat = artwork == .board ? 1024 : 512
     guard let context = CGContext(data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0,
         space: CGColorSpace(name: CGColorSpace.sRGB)!, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else {
@@ -119,7 +123,9 @@ func export(_ name: String, width: Int, height: Int, artwork: Artwork, to root: 
     context.translateBy(x: 0, y: CGFloat(height)); context.scaleBy(x: CGFloat(width)/viewWidth, y: -CGFloat(height)/viewHeight)
     switch artwork {
     case .mark, .vertical: press(context)
+    case .darkMark: press(context, dark: true)
     case .lockup: lockup(context)
+    case .darkLockup: lockup(context, dark: true)
     case .monochrome: lockup(context, monochrome: true)
     case .icon: appIcon(context)
     case .board:
@@ -133,10 +139,11 @@ func export(_ name: String, width: Int, height: Int, artwork: Artwork, to root: 
         }
         text("APP ICON", context: context, x: 70, y: 575, size: 18, tracking: 4)
         text("MONOCHROME", context: context, x: 545, y: 575, size: 18, tracking: 4)
-        text("PRIMARY MARK", context: context, x: 1095, y: 575, size: 18, tracking: 4)
+        text("ON DARK", context: context, x: 1095, y: 575, size: 18, tracking: 4)
         positioned(context, x: 83, y: 630, scale: 0.67) { appIcon(context) }
         positioned(context, x: 525, y: 720, scale: 0.36) { lockup(context, monochrome: true) }
-        positioned(context, x: 1110, y: 620, scale: 0.78) { press(context) }
+        rectangle(context, .init(x: 1095, y: 620, width: 450, height: 350), radius: 28, color: navy)
+        positioned(context, x: 1110, y: 620, scale: 0.78) { press(context, dark: true) }
     }
     guard let image = context.makeImage(), let bytes = NSBitmapImageRep(cgImage: image).representation(using: .png, properties: [:]) else {
         throw NSError(domain: "CamPresso.Brand", code: 2)
@@ -145,13 +152,17 @@ func export(_ name: String, width: Int, height: Int, artwork: Artwork, to root: 
 }
 
 try svg("campresso-mark.svg", body: geometry())
+try svg("campresso-mark-dark.svg", body: geometry(dark: true))
 try svg("campresso-lockup.svg", width: 1440, body: geometry()+lettering())
+try svg("campresso-lockup-dark.svg", width: 1440, body: geometry(dark: true)+lettering(dark: true))
 try svg("campresso-monochrome.svg", width: 1440, body: geometry(monochrome: true)+lettering())
 // Retain the vertical filename as a compatible alias of the primary mark.
 try svg("campresso-vertical.svg", body: geometry())
 try svg("campresso-icon.svg", body: iconGeometry)
 try export("campresso-mark.png", width: 1024, height: 1024, artwork: .mark)
+try export("campresso-mark-dark.png", width: 1024, height: 1024, artwork: .darkMark)
 try export("campresso-lockup.png", width: 2880, height: 1024, artwork: .lockup)
+try export("campresso-lockup-dark.png", width: 2880, height: 1024, artwork: .darkLockup)
 try export("campresso-monochrome.png", width: 2880, height: 1024, artwork: .monochrome)
 try export("campresso-vertical.png", width: 1024, height: 1024, artwork: .vertical)
 try export("campresso-icon.png", width: 1024, height: 1024, artwork: .icon)
