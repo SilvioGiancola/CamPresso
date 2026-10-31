@@ -132,6 +132,12 @@ Spatial Audio passthrough is limited to supported full unedited URL renditions w
 
 Independent validation checks complete video/audio decoding, output duration (`max(0.5s, 0.5%)` tolerance), dimensions, frame rate, audio track count, HDR and actual size against the stored original resource. Unknown original size or non-smaller results are skipped. Successful output is bound by SHA-256 and `[size, mtime_ns]` before import. The native journal records the hash and exact imported identifier.
 
+## Playback and window lifecycle
+
+Single-video playback uses `PlaybackSession` and an AppKit `AVPlayerView` wrapped by `NativePlaybackView`. Avoid SwiftUI's `VideoPlayer`: the supplied macOS 27.0.1 reports for 4.1.5 show a main-thread abort in `_AVKit_SwiftUI` superclass metadata initialization while `AppModel.play` constructs its hosting controller. The native view bypasses that failing generic overlay. The Python broken-pipe traces follow the frontend exit and are not the initiating crash.
+
+Each player window owns its cancellable Photos request, player item, KVO and failure notification. Generation checks reject delayed callbacks from a prior retry. Empty IDs/denied access fail before retrieval, unavailable/failed assets show an in-window error, and retry is read-only. `PlaybackWindowController` releases the media and removes itself from the model registry when closed. App shutdown closes these controllers to cancel pending playback retrieval as well. Comparison continues to use the existing native `AVPlayerLayer` surfaces and approval checks.
+
 ## Photos transactions and approvals
 
 Only the personal System Photo Library is writable. Python enforces the selected System library before each operation; Swift handles full Photos authorization and blocks Shared Album assets. Public PhotoKit does not offer a reliable family Shared Photo Library membership check here. OSXPhotos' positive experimental shared flag blocks writes, but a false flag is not proof of personal ownership. Settings therefore require explicit confirmation that family Shared Photo Library is not configured. Do not remove that gate without a reliable replacement.

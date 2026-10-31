@@ -125,7 +125,7 @@ final class AppModel: ObservableObject {
     private var closeReplied = false
     private var started = false
     private var reviewWindow: NSWindow?
-    private var playbackWindows: [NSWindow] = []
+    private var playbackWindows: [UUID: PlaybackWindowController] = [:]
     private let reader = PacketReader()
     private var pipe: Pipe?
     private var itemsByID: [String: VideoItem] = [:]
@@ -429,17 +429,21 @@ final class AppModel: ObservableObject {
         action("photos.show", ["id": identifier])
     }
     func play(_ row: VideoRow, compressed: Bool = false) {
-        let identifier = compressed || row.state == "Completed" && string(row.raw["decision"]) == "keep" ? row.resultID : row.originalID
-        Task {
-            do {
-                let item = try await AssetRepository.shared.player(identifier)
-                let player = AVPlayer(playerItem: item)
-                let controller = NSHostingController(rootView: PlaybackView(player: player).campressoTheme())
-                let window = NSWindow(contentViewController: controller); window.title = row.name
-                window.setContentSize(.init(width: 900, height: 600)); window.center(); window.isReleasedWhenClosed = false
-                playbackWindows.append(window); window.makeKeyAndOrderFront(nil); player.play()
-            } catch { notice = error.localizedDescription }
+        guard !closing else { return }
+        let useCompressed = compressed || row.state == "Completed" && string(row.raw["decision"]) == "keep"
+        let identifier = useCompressed ? row.resultID : row.originalID
+        guard !identifier.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            notice = useCompressed
+                ? "No compressed copy is recorded in Photos. Inspect Photos status or finish adding the saved result before playing it."
+                : "The original Photos identifier is unavailable. Refresh the library or inspect this video's status."
+            return
         }
+        let id = UUID()
+        let controller = PlaybackWindowController(identifier: identifier,
+            title: "\(useCompressed ? "Compressed" : "Original") — \(row.name)") { [weak self] in
+                self?.playbackWindows.removeValue(forKey: id)
+            }
+        playbackWindows[id] = controller; controller.open()
     }
     func beginClose() -> Bool {
         if closing { return false }
@@ -450,6 +454,7 @@ final class AppModel: ObservableObject {
             guard dialog.runModal() == .alertFirstButtonReturn else { return false }
         }
         closing = true
+        for controller in Array(playbackWindows.values) { controller.close() }
         if !connected {
             if media.hasWork { finishNativeClose(); return false }
             media.shutdown(); return true

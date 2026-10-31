@@ -227,8 +227,3 @@ struct ReviewView: View {
         }
     }
 }
-
-struct PlaybackView: View {
-    let player: AVPlayer
-    var body: some View { VideoPlayer(player: player).frame(minWidth: 640, minHeight: 360).onDisappear { player.pause(); player.replaceCurrentItem(with: nil) } }
-}

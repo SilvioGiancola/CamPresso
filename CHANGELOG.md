@@ -1,6 +1,12 @@
 # Changelog
 
-## Unreleased — 4.1.5
+## Unreleased — 4.1.6
+
+- Fix the reported Play original/Play compressed crash by replacing SwiftUI's `VideoPlayer` with native macOS `AVPlayerView`; crash reports showed an abort inside `_AVKit_SwiftUI` during player-view metadata initialization.
+- Show Photos retrieval and decoding failures inside the playback window with an explicit playback retry. Missing compressed identifiers require inspection rather than an attempted import.
+- Cancel pending playback requests and release player items/observers when closing a player or quitting the app; remove closed players from the window registry.
+
+## 4.1.5
 
 - Restore a dark navy app/icon background and align the navy, orange, cyan and surface colors across app windows, artwork and the website's app illustration.
 - Add dark-background logo/lockup exports with white motion lines, base and lettering; retain the three-line press and the orange/cyan elements.

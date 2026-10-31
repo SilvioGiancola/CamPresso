@@ -69,3 +69,14 @@ These interactive scenarios have not been executed as part of the build/static c
 - Confirm the theme does not tint thumbnail or playback pixels; the comparison stage stays black and media color verification remains unchanged.
 
 App builds and asset/site inspection do not constitute execution of these live application scenarios.
+
+## Playback crash regression scenarios
+
+The October 28 and October 31 crash reports from 4.1.5 on macOS 27.0.1 both terminate inside `_AVKit_SwiftUI` during `AppModel.play`. The 4.1.6 fix uses AppKit `AVPlayerView` instead; static symbol inspection should show no SwiftUI `VideoPlayer` references in the executable.
+
+- Open original and compressed playback for Ready to review and Needs attention records with known IDs; use native play/pause, seek, volume and full screen, then close/reopen repeatedly.
+- Try an empty/unrecorded compressed ID, removed Photos asset, revoked permission, offline cloud rendition and a rendition that fails decoding. Show an actionable error while keeping the app and workflow running.
+- Close or quit while Photos is retrieving playback, and retry while an earlier request is pending. Requests cancel, stale callbacks do not affect the next attempt, and closed player windows/items are released.
+- Confirm playback failures/retries leave workflow approvals, Photos identifiers and recovery journals unchanged, and never repeat an import/removal. Inspect unresolved writes separately before restoring a comparison review.
+
+These are acceptance scenarios, not a record of a live Photos/playback test run. Crash-report analysis, compilation and symbol inspection are separate evidence.

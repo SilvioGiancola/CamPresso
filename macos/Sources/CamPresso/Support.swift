@@ -128,18 +128,27 @@ final class AssetRepository: NSObject, PHPhotoLibraryChangeObserver, @unchecked 
         }
     }
     func player(_ identifier: String) async throws -> AVPlayerItem {
+        try Task.checkCancellation()
+        guard !identifier.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            throw WorkflowError(message: "No Photos video is recorded for playback. Inspect this video's status first.")
+        }
+        guard PHPhotoLibrary.authorizationStatus(for: .readWrite) == .authorized else {
+            throw WorkflowError(message: "Full Photos access is required for playback. Allow access in System Settings → Privacy & Security → Photos.", code: "permission")
+        }
         guard let asset = try find(identifier) else { throw WorkflowError(message: "Video unavailable") }
         let cancellation = CancellationFlag()
         return try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { continuation in
                 let once = Once(continuation)
+                cancellation.add { once.finish(.failure(CancellationError())) }
+                guard !cancellation.isCancelled else { return }
                 let options = PHVideoRequestOptions(); options.version = .current; options.isNetworkAccessAllowed = true
                 options.deliveryMode = .highQualityFormat
                 let request = PHImageManager.default().requestPlayerItem(forVideo: asset, options: options) { item, info in
                     if let item { once.finish(.success(item)) }
                     else { once.finish(.failure((info?[PHImageErrorKey] as? Error) ?? WorkflowError(message: "Cannot load this video. It may need an iCloud connection."))) }
                 }
-                cancellation.add { PHImageManager.default().cancelImageRequest(request); once.finish(.failure(CancellationError())) }
+                cancellation.add { PHImageManager.default().cancelImageRequest(request) }
             }
         } onCancel: { cancellation.cancel() }
     }

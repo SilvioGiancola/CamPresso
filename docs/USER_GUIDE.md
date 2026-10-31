@@ -43,6 +43,8 @@ Estimates are approximate, especially when frame rate or duration is unavailable
 
 Right-click a card for **Play**, **Compare**, **Show in Photos**, compression and Details. Play may retrieve a cloud rendition. Show in Photos reveals the surviving version after a completed decision; it does not switch libraries.
 
+Playback opens in its own window with native Mac controls. Photos retrieval or decoding errors appear in that window with **Retry Playback**. Closing the player cancels its pending retrieval and releases its video. For **Needs attention**, you can play either recorded Photos copy that still exists; use **Inspect Photos status** if a copy is missing or its import is uncertain. Playback and Retry Playback do not repeat an import or approve a review decision.
+
 ## Compress
 
 Click **Compress**. There are no separate download/upload/delete controls in the normal workflow.
