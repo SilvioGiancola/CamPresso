@@ -51,7 +51,7 @@ def identity(job):
     return dict(id=hashlib.sha256((library+'|'+asset_key(source)).encode()).hexdigest(),
                 library=library, source_id=asset_key(source), result_id=job.get('result_id') or job.get('new_uuid'),
                 generated_ids=results, decision=job.get('decision') or
-                ('keep' if job.get('original_removed') else None), pending=protected(job))
+                ('keep' if job.get('original_removed') else None), pending=protected(job), uncertain=uncertain(job))
 
 
 def merge_links(existing, jobs):
@@ -206,10 +206,12 @@ class History:
         self.previous_file.write(dict(version=1, entries=self.previous))
 
     def has_uncertain_previous(self):
-        return any(not entry.get('restored') and uncertain(entry['job']) for entry in self.previous)
+        return any(not entry.get('restored') and not entry.get('session_archived')
+                   and uncertain(entry['job']) for entry in self.previous)
 
     def preview_cleanup(self, jobs):
-        jobs = list(jobs)
+        jobs = list(jobs) + [dict(entry['job'], state='Needs attention') for entry in self.previous
+                             if entry.get('session_archived') and not entry.get('restored')]
         preview = cleanup_preview(self.data, jobs)
         # Failed removals remain explicitly tracked, without restoring history.
         pending = read_strict(self.pending_file.path)
@@ -230,7 +232,8 @@ class History:
         preview['bytes'] += sum(value['bytes'] for value in preview['previous'].values())
         for value in preview['previous'].values():
             preview['retained'] += value['retained']
-        preview['protected_count'] += sum(not item.get('restored') for item in self.previous)
+        preview['protected_count'] += sum(not item.get('restored') and not item.get('session_archived')
+                                          for item in self.previous)
         self.preview = preview
         return dict(token=preview['token'], records=len(preview['job_ids']) + sum(
                     len(value['old_job_ids']) for value in preview['previous'].values()), bytes=preview['bytes'],
@@ -255,9 +258,9 @@ class History:
                             retry_safe=True, replacement_complete=True)
             groups.setdefault(entry['source_root'], []).append(resolved)
         plans = {}
-        roots = {entry['source_root'] for entry in self.previous}
+        roots = {entry['source_root'] for entry in self.previous if Path(entry['source_root']) != self.data}
         legacy = self.data.parent/LEGACY_NAME
-        if legacy.is_dir():
+        if legacy.is_dir() and legacy != self.data:
             roots.add(str(legacy))
         for root in roots:
             root = Path(root)
@@ -299,6 +302,22 @@ class History:
         roots = {Path(entry['source_root']) for entry in self.previous} | {self.data.parent/LEGACY_NAME}
         for root in roots:
             paths.update(read_strict(root/'campresso_cleanup_pending.json').get('files', {}))
+        archived = {}
+        for entry in self.previous:
+            if not entry.get('session_archived'):
+                continue
+            job = entry['job']
+            values = {value for value, _ in references(job)}
+            root = Path(entry['source_root'])
+            folder = root/'NativeWork'/str(job.get('id', ''))
+            try:
+                if job.get('id') and safe_path(folder, root) and folder.is_dir():
+                    values.update(str(path) for path in folder.rglob('*') if path.is_file() and not path.is_symlink())
+            except OSError:
+                pass
+            for value in values:
+                archived[value] = 'Earlier session archive; retained file, no job will resume.'
+        paths.update(archived)
         rows = []
         for value in sorted(paths):
             try:
@@ -306,13 +325,13 @@ class History:
             except OSError:
                 continue
             rows.append(dict(id=value, path=value, bytes=size,
-                             reason='Changed, external or unverified file; retained for inspection.'))
+                             reason=archived.get(value, 'Changed, external or unverified file; retained for inspection.')))
         return rows
 
     def summaries(self):
         result = []
         for entry in self.previous:
-            if entry.get('restored'):
+            if entry.get('restored') or entry.get('session_archived'):
                 continue
             job = entry['job']
             paths = {value for value, _ in references(job)}

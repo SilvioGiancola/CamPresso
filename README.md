@@ -21,7 +21,7 @@ Browse a compact thumbnail gallery, compress local or iCloud videos, then compar
 5. Open **Review**. Use the comparison divider, shared timeline and audio switch.
 6. Choose **Keep Compressed** to move the matching original to Recently Deleted, or **Revert** to remove the generated copy. Selected results can be decided as a batch.
 
-**Compression adds a verified smaller copy to Photos before review. Your original stays until you choose Keep Compressed.** Pending reviews survive closing the app. These changes synchronize through iCloud Photos when enabled.
+**Compression adds a verified smaller copy to Photos before review. Your original stays until you choose Keep Compressed.** Finish review before closing: each launch starts with a fresh queue and empty Review/Completed views. Existing Photos copies stay unchanged. These changes synchronize through iCloud Photos when enabled.
 
 ## Documentation
 
@@ -35,9 +35,9 @@ Browse a compact thumbnail gallery, compress local or iCloud videos, then compar
 
 ## Fresh start and history cleanup
 
-The first CamPresso installation uses a new app identity and data folder, with blank library settings, default conversion settings and empty history. The installer keeps prior asset associations separately and preserves unfinished reviews in **Settings → Previous work / Recovery**. No Photos videos are removed by installation.
+Each launch starts a new session. The saved library and conversion settings are remembered, while earlier jobs, errors and reviews are not restored or resumed. Existing Photos copies stay in place. Minimal asset associations and archived journals protect against repeating an uncertain import or deletion; affected entries can remain **Protected** in Library without becoming active jobs.
 
-Use **Settings → Storage → Clear conversion history…** to preview finished records and safe temporary files before clearing them. Pending reviews, recovery journals, changed/external files and Photos videos are protected. Later CamPresso updates preserve its settings and current work.
+Use **Settings → Storage → Clear conversion history…** to clear finished records during the current session. Safe temporary files are also cleaned when a new session starts. Uncertain journals, changed/external files and Photos videos are protected; retained local files are listed in Storage. No installation or session-reset step removes Photos videos.
 
 See the [branding guide](docs/BRANDING.md) for editable logos and exports.
 

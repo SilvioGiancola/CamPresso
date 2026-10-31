@@ -1,6 +1,13 @@
 # Changelog
 
-## Unreleased — 4.1.6
+## Unreleased — 4.1.7
+
+- Start each launch with an empty processing queue, Review and Completed history, while remembering the Photos library and conversion settings.
+- Archive earlier Photos-operation evidence without restoring or retrying jobs. Preserve asset associations, journals and unsafe files; only unchanged disposable app media is removed.
+- Keep earlier affected assets protected against duplicate compression without blocking unrelated videos. Photos copies remain unchanged when a session ends.
+- Discard stale queued Service requests; preserve the explicit Service invocation that launches the app and requests made during the current session.
+
+## 4.1.6
 
 - Fix the reported Play original/Play compressed crash by replacing SwiftUI's `VideoPlayer` with native macOS `AVPlayerView`; crash reports showed an abort inside `_AVKit_SwiftUI` during player-view metadata initialization.
 - Show Photos retrieval and decoding failures inside the playback window with an explicit playback retry. Missing compressed identifiers require inspection rather than an attempted import.

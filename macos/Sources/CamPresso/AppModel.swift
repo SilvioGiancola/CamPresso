@@ -113,7 +113,6 @@ final class AppModel: ObservableObject {
     @Published var authorizing = false
     @Published var photoAuthorized = PHPhotoLibrary.authorizationStatus(for: .readWrite) == .authorized
     @Published var runIDs = Set<String>()
-    @Published var previousWork: [JSONObject] = []
     @Published var cleaning = false
     @Published var retainedFiles: [JSONObject] = []
     let data: URL
@@ -124,6 +123,8 @@ final class AppModel: ObservableObject {
     private var commandTimeouts: [String: Task<Void, Never>] = [:]
     private var closeReplied = false
     private var started = false
+    private let sessionStartedAt = (NSRunningApplication.current.launchDate ?? Date()).timeIntervalSince1970
+    private let launchServiceRequest: String?
     private var reviewWindow: NSWindow?
     private var playbackWindows: [UUID: PlaybackWindowController] = [:]
     private let reader = PacketReader()
@@ -147,6 +148,7 @@ final class AppModel: ObservableObject {
             return arguments[index+1]
         }
         data = URL(fileURLWithPath: option("--data-dir") ?? NSHomeDirectory()+"/Library/Application Support/CamPresso").resolvingSymlinksInPath()
+        launchServiceRequest = option("--service-request")
         media = NativeMedia(data: data)
     }
     var rows: [VideoRow] { items.map(\.row) }
@@ -221,7 +223,10 @@ final class AppModel: ObservableObject {
             let python = custom ?? NSHomeDirectory()+"/Library/Application Support/CamPresso/venv/bin/python"
             guard FileManager.default.isExecutableFile(atPath: python) else { throw WorkflowError(message: "Run Install.command to install the Python workflow backend.") }
             task.executableURL = URL(fileURLWithPath: python)
-            task.arguments = ["-m", "campresso.backend", "--stdio", "--data-dir", data.path]
+            var backendArguments = ["-m", "campresso.backend", "--stdio", "--data-dir", data.path,
+                                    "--session-started-at", String(sessionStartedAt)]
+            if let launchServiceRequest { backendArguments += ["--service-request", launchServiceRequest] }
+            task.arguments = backendArguments
             var environment = ProcessInfo.processInfo.environment
             environment["PATH"] = "/opt/homebrew/bin:/usr/local/bin:" + (environment["PATH"] ?? "/usr/bin:/bin")
             environment["PYTHONUNBUFFERED"] = "1"; task.environment = environment
@@ -241,7 +246,7 @@ final class AppModel: ObservableObject {
                 Task { @MainActor in
                     guard let self else { return }
                     self.connected = false
-                    self.replies.values.forEach { $0.resume(throwing: WorkflowError(message: "The workflow backend stopped. Reopen the app to reconcile recovery.")) }
+                    self.replies.values.forEach { $0.resume(throwing: WorkflowError(message: "The workflow backend stopped. Reopen the app to start a fresh session.")) }
                     self.replies.removeAll()
                     self.commandTimeouts.values.forEach { $0.cancel() }; self.commandTimeouts.removeAll()
                     self.media.cancel()
@@ -300,7 +305,6 @@ final class AppModel: ObservableObject {
                 scanning = value["scanning"] as? Bool == true; paused = value["paused"] as? Bool == true
                 catalogError = value["catalog_error"] as? String; fatalError = value["fatal_error"] as? String
                 runIDs = Set(value["run_ids"] as? [String] ?? [])
-                previousWork = value["previous_work"] as? [JSONObject] ?? []
                 cleaning = value["cleaning"] as? Bool == true
                 retainedFiles = value["retained_files"] as? [JSONObject] ?? []
             case "job":
@@ -366,7 +370,7 @@ final class AppModel: ObservableObject {
                 let preview = try await request("history.previewCleanup")
                 let dialog = NSAlert()
                 dialog.messageText = "Clear conversion history?"
-                dialog.informativeText = "Remove \(Int(number(preview["records"]) ?? 0)) finished records and up to \(humanSize(number(preview["bytes"]))) of safe temporary files.\n\n\(Int(number(preview["protected_count"]) ?? 0)) unfinished/recovery records and \(Int(number(preview["retained_count"]) ?? 0)) changed/external files are protected. Apple Photos videos, settings and recovery journals stay unchanged."
+                dialog.informativeText = "Remove \(Int(number(preview["records"]) ?? 0)) finished records and up to \(humanSize(number(preview["bytes"]))) of safe temporary files.\n\n\(Int(number(preview["protected_count"]) ?? 0)) current/archive safety records and \(Int(number(preview["retained_count"]) ?? 0)) changed/external files are protected. Apple Photos videos, settings and journals stay unchanged."
                 dialog.addButton(withTitle: "Clear History and Temporary Files")
                 dialog.addButton(withTitle: "Cancel")
                 guard dialog.runModal() == .alertFirstButtonReturn else { return }
@@ -374,16 +378,6 @@ final class AppModel: ObservableObject {
                 let retained = result["retained"] as? [String] ?? []
                 notice = "Cleared \(Int(number(result["records"]) ?? 0)) records and \(humanSize(number(result["removed_bytes"])))." +
                     (retained.isEmpty ? "" : "\n\nSome files were retained. Run cleanup again to retry:\n" + retained.joined(separator: "\n"))
-            } catch { notice = error.localizedDescription }
-        }
-    }
-    func inspectPrevious(_ id: String) {
-        cleaning = true
-        Task {
-            defer { cleaning = false }
-            do {
-                let result = try await request("previous.inspect", ["id": id])
-                notice = string(result["message"]); section = .review
             } catch { notice = error.localizedDescription }
         }
     }
@@ -449,7 +443,7 @@ final class AppModel: ObservableObject {
         if closing { return false }
         if !processing.isEmpty {
             let dialog = NSAlert(); dialog.messageText = "Stop and close CamPresso?"
-            dialog.informativeText = "Downloads and conversions will stop. Finished Photos copies and pending reviews will remain available. An active Photos change will finish safely first."
+            dialog.informativeText = "Downloads and conversions will stop. Next launch starts with a fresh queue and no previous reviews. Videos already added to Photos stay there. An active Photos change will finish safely first."
             dialog.addButton(withTitle: "Stop and Close"); dialog.addButton(withTitle: "Keep Working")
             guard dialog.runModal() == .alertFirstButtonReturn else { return false }
         }

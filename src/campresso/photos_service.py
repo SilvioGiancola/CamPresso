@@ -20,7 +20,7 @@ def enqueue(values):
     # The Service runner may not be allowed to read Photos' preference files.
     # Resolve the library inside CamPresso, with its own access permissions.
     StateFile(target).write(dict(version=1,action='convert1080',library=None,uuids=identifiers))
-    result=subprocess.run(['/usr/bin/open',str(app)],capture_output=True,text=True,timeout=15)
+    result=subprocess.run(['/usr/bin/open',str(app),'--args','--service-request',target.stem],capture_output=True,text=True,timeout=15)
     if result.returncode:raise RuntimeError('The request was queued, but CamPresso could not open: '+result.stderr.strip())
 
 def library_candidates(request,cancel):

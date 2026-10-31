@@ -27,12 +27,6 @@ struct LibraryView: View {
                     Spacer(); Button("Open Settings…") { openSettings() }
                 }.padding(12).background(Brand.cyan.opacity(0.08))
             }
-            if !model.previousWork.isEmpty {
-                HStack {
-                    Label("\(model.previousWork.count) previous review/recovery item(s) retained.", systemImage: "archivebox")
-                    Spacer(); Button("Previous work / Recovery…") { openSettings() }
-                }.font(.callout).padding(10).background(.orange.opacity(0.08))
-            }
             if model.rows.contains(where: { $0.state == "Needs attention" }) {
                 HStack {
                     Label("Some Photos operations need inspection. Their recovery files have been kept.", systemImage: "exclamationmark.shield")

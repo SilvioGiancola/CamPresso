@@ -27,11 +27,11 @@ Use disposable videos and a dedicated test **System Photo Library**, with a back
 | Changed asset/output | Recheck versions/hash/generation; require another review; no write against stale approval. |
 | Interrupt before/after import commit | Journal retains exact placeholder/returned ID; inspect confirms existing pair; never blindly import again. |
 | Interrupt removal | Inspect target/survivor IDs; no automatic replay; uncertain operation blocks further writes. |
-| Cancel and close | Confirmation works from close button/Quit; reads/encode stop; active Photos write finishes; reviews survive reopening. |
+| Cancel and close | Confirmation works from close button/Quit; reads/encode stop; active Photos write finishes; next launch starts fresh and existing Photos copies remain unchanged. |
 | Disk exhaustion / persistence failure | Original retained, recoverable state and files kept; no unrecorded continuation of writes. |
-| Reopening | Saved library loads, pending reviews retrieved, completed pairs stay grouped and are not offered as fresh originals. |
+| Reopening | Saved library/settings load; queue, Review and Completed start empty. No prior job is inspected, retried or resumed. Minimal Photos associations still prevent duplicate replacements. |
 | Cache cleanup | Safe app media released; unknown/changed/recovery files retained with size/reason; no external/library-file removal. |
-| Version-3 migration | Backup state/preferences before changing them; preserve completed/pending pairs; local-only explicit import; uncertain journals reconciled first. |
+| Version-3 migration | Back up state/preferences; preserve associations and uncertain evidence in the quiet archive; start empty without importing local-only results or restoring pending pairs. |
 | Permissions/shared library | Denied access fails visibly; non-System/shared/uncertain cases do not write. |
 | Photos Service | Grid selection IDs enqueue 1080p workflow; no replacement approval; failed selection is visible/retryable. |
 
@@ -43,7 +43,7 @@ Inspect Recently Deleted and both supported metadata and unsupported metadata li
 No test or live-library execution is implied by this checklist.
 
 - Fresh installation has a blank library, default settings, empty Processing/Completed views and the branded icon/About/tagline; reopening after setup remembers the newly chosen library.
-- Previous completed decisions lose detailed history but retain minimal associations; the pending prior review remains in Recovery and requires explicit read-only inspection before restoration.
+- Previous completed decisions retain minimal associations; unfinished reviews/uncertain writes are quietly archived with no restore controls or startup work.
 - Cleanup preview/confirmation counts match, cancellation changes nothing, and repeated cleanup remains safe with no duplicate imports.
 - Cleanup never removes Photos assets, external inputs, changed files, hard links, symlinks, pending reviews, paused/active work or uncertain transaction material.
 - Interrupt between ledger publication, workflow removal and file unlinking; reopening preserves recognition/recovery and offers retry for remaining safe files.
@@ -80,3 +80,14 @@ The October 28 and October 31 crash reports from 4.1.5 on macOS 27.0.1 both term
 - Confirm playback failures/retries leave workflow approvals, Photos identifiers and recovery journals unchanged, and never repeat an import/removal. Inspect unresolved writes separately before restoring a comparison review.
 
 These are acceptance scenarios, not a record of a live Photos/playback test run. Crash-report analysis, compilation and symbol inspection are separate evidence.
+
+## Fresh-session acceptance scenarios
+
+- Seed queued, downloading, converting, paused, failed, local-only, imported-review and completed records; reopen with no lanes, decisions, approvals, Processing, Review or Completed entries restored. Preserve library/settings and all Photos assets.
+- Verify ordinary unfinished originals are eligible for new work; recorded result IDs remain recognized, and uncertain source/result IDs are protected without blocking unrelated work.
+- Interrupt after association publication, archive publication, cleanup intent, empty-workflow commit and file cleanup. Reopening remains idempotent, never repeats a Photos write and never loses uncertain journal/file references.
+- Preserve changed/external files, inputs, hard links, symlinks and files inside a Photos library. Cleanup preview protects archived paths and does not treat the current data root as a previous installation.
+- Discard stale Service requests, retain the exact request that launches the app and accept requests arriving in the current session. Failed request-file removal must never cause that old request to execute.
+- Finish a review before closing; reopen with empty Completed but the survivor recognized. Close before review; both Photos copies remain, no old review returns, and manual removal of a known compressed copy followed by Refresh can release its original's eligibility.
+
+These scenarios have not been executed. Startup/file migration checks and live-library operations require their own explicit authorization.

@@ -6,7 +6,7 @@
 
 Requirements: **macOS 26+**, a Mac supporting hardware HEVC encoding, **Xcode 26+ / Swift 6.2+**, and [Homebrew](https://brew.sh/). The installer builds the native app locally, installs Python 3.13, FFmpeg/ffprobe and ExifTool, and creates the Photos Service.
 
-Quit CamPresso and the previous app, then double-click `Install.command` or run `bash Install.command` in the repository. The app is installed at `~/Applications/CamPresso.app`. The first CamPresso installation starts fresh: it does not import the previous app’s library selection, settings, history or approvals. Subsequent CamPresso updates preserve CamPresso data and preferences. Because local builds use an ad hoc signature, macOS may ask for permissions again after an update. Distribution signing/notarization is not provided by this installer.
+Quit CamPresso and the previous app, then double-click `Install.command` or run `bash Install.command` in the repository. The app is installed at `~/Applications/CamPresso.app`. The first CamPresso installation starts fresh: it does not import the previous app’s library selection, settings, history or approvals. Subsequent CamPresso updates preserve preferences and safety records; each app launch starts a new interactive session. Because local builds use an ad hoc signature, macOS may ask for permissions again after an update. Distribution signing/notarization is not provided by this installer.
 
 Open the app through Finder or Spotlight. The old Tk interface is no longer the application entry point.
 
@@ -24,6 +24,8 @@ The new identity can require Photos, Full Disk Access and Automation permissions
 
 The saved library is scanned automatically on launch. If catalog reading fails, check the path and grant CamPresso Full Disk Access in **Privacy & Security → Full Disk Access**, then reopen it. Refresh (`⌘R`) reloads the catalog; the app does not edit Photos databases directly.
 
+Each launch starts a **fresh session**: the processing queue, Review and Completed views are empty, with no previous job recovery or automatic retry. Library selection, conversion options and setup acknowledgments are remembered. Original/converted videos already in Photos are unchanged. Finish Keep Compressed/Revert decisions before closing; an abandoned review does not reopen next time.
+
 ## Browse and select
 
 The gallery shows thumbnails, favorites (♥), duration, original size, estimated size reduction, cloud/local availability at the last catalog refresh, and one current status.
@@ -36,6 +38,8 @@ Progress updates refresh the active card instead of rebuilding the gallery. Conv
 - **Processing:** work in progress, paused/retryable work and errors.
 - **Review:** saved compressed pairs awaiting a decision and items needing inspection.
 - **Completed:** confirmed decisions, grouped into one entry per original/replacement pair.
+
+These processing/review/completed views describe only the current session. Library can still recognize **Already compressed**, **Original kept** and **Protected** assets from their minimal Photos associations. Protected means an earlier copy or uncertain Photos operation is recorded, so it is excluded from new compression; no old job will run. Manage old copies in Photos. After manually removing a known, fully recorded compressed copy, Refresh can make its original eligible again; an uncertain write stays protected.
 
 Sort by most estimated savings, largest original, date or filename. Search filenames/identifiers and filter favorites or local items. Click cards to toggle multiple selection. With nothing selected, Compress targets eligible videos in the current view whose estimated reduction is at least 5%, plus videos without a reliable estimate. Explicit selection allows trying other videos; actual output must still be smaller.
 
@@ -105,7 +109,7 @@ Dates, location, favorite, hidden status, original filename stem and writable re
 | Skipped | Unsupported media or result not smaller; see reason in Details. |
 | Error | Ordinary failure; original unchanged. Retry after checking Details. |
 | Needs attention | Changed asset, uncertain transaction or retained recovery file. Inspect first. |
-| Awaiting import | Migrated local-only result. Explicit **Add existing result for review…** is required. |
+| Protected | Earlier Photos copy or uncertain operation; excluded from new work without restoring an old job. Manage old copies in Photos. |
 
 ## Photos Service
 
@@ -115,17 +119,17 @@ If missing, check **System Settings → Keyboard → Keyboard Shortcuts → Serv
 
 ## Close, storage and recovery
 
-Closing during processing asks **Stop and Close** or **Keep Working**. Confirming stops downloads/encoding, preserves finished Photos reviews and waits for an active Photos transaction. An operating-system Photos confirmation may need a response before it can finish.
+Closing during processing asks **Stop and Close** or **Keep Working**. Confirming stops downloads/encoding and waits for an active Photos transaction. An operating-system Photos confirmation may need a response before it can finish. The next launch starts empty, without restoring reviews, failures or paused jobs. Photos copies remain as they were; if you closed before a review decision, both versions stay in Photos for manual management.
 
 Safe app-managed media under `~/Library/Application Support/CamPresso/NativeWork/` is released after verified import and on clean close. Comparison media is requested again from Photos as needed. Photos itself manages its iCloud downloads and cache; CamPresso cannot promise to evict those bytes.
 
-Unresolved operations retain recovery files. **Details** shows their size/reason, both identifiers, generation and operation history; **Open Logs and Recovery** opens the data directory. Preferences, identifiers, workflow records, migration backups and transaction journals remain. External inputs and files inside `.photoslibrary` bundles are never removed by cache cleanup.
+Unresolved operations retain recovery files. During a session, **Details** shows their size/reason, both identifiers, generation and operation history. On the next launch, this evidence is archived separately instead of becoming a recovered job. **Settings → Storage → Retained files** shows preserved local bytes, and **Open Logs and Recovery** opens the data directory. Preferences, identifiers, migration backups and journals remain. External inputs and files inside `.photoslibrary` bundles are never removed by cache cleanup.
 
 For **Needs attention**, use **Inspect Photos status**. Inspection reads exact IDs and journals; it never retries an import or deletion. If both versions are verified, another review becomes available. If an import ID is unknown or a version is missing, the state remains unresolved: inspect Photos and the journal manually. Do not repeatedly enqueue the same source or delete recovery files to clear the warning.
 
-### Previous work / Recovery
+### Earlier sessions
 
-The rebrand installer preserves unfinished earlier reviews and uncertain Photos operations under **Settings → Previous work / Recovery**, separate from the new history. Their files and journals stay at the original locations. Choose the recorded System Photo Library and click **Inspect and restore review…**. This reads exact identifiers and receipts without repeating an import or deletion. A verified pair returns to Review only after inspection; an already-confirmed decision keeps its history cleared. Unresolved cases remain protected. Uncertain previous Photos writes pause further imports/decisions until inspection; a pending review alone does not block other videos. The installer retires only verified previous app/Service bundles after the new installation succeeds.
+Earlier records, including preserved work from the previous app, are a quiet archive. They do not show a restore prompt, refill Review or block unrelated videos. Associated assets remain recognized/protected so the app does not create duplicate replacements. Neither old approvals nor uncertain writes are replayed. Existing journals and any required files stay at their recorded paths. Old unprocessed Photos Service requests are discarded, while a new explicit Service invocation starts work in the fresh session.
 
 ### Clear conversion history
 

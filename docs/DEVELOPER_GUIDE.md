@@ -74,6 +74,7 @@ flowchart LR
 | [NativeEncoder.swift](../macos/Sources/CamPresso/NativeEncoder.swift) | Current rendition, hardware encoding, HDR, composition, audio and native output checks. |
 | [backend.py](../src/campresso/backend.py) | Headless scheduling, workflow mutations, catalog, frontend snapshots, Service handoff and recovery policy. |
 | [native_store.py](../src/campresso/native_store.py), [native_validation.py](../src/campresso/native_validation.py) | Strict persisted records/migration, hashes and independent FFmpeg checks. |
+| [session_reset.py](../src/campresso/session_reset.py) | Startup session reset, quiet archival, safe disposable-file cleanup and stale Service request handling. |
 | [photos_catalog.py](../src/campresso/photos_catalog.py) | Read-only OSXPhotos queries, original resource size, favorites and positive shared flags. |
 | [legacy_app.py](../src/campresso/legacy_app.py), older Photos/conversion helpers | Retained legacy compatibility and recovery contracts; not the production frontend or native write path. |
 
@@ -159,12 +160,19 @@ Native `PhotosTransactionGate` serializes writes and reconciliation even if a ba
 
 ## Persistence and migration
 
+From 4.1.7, persistence protects Photos identity/transactions rather than restoring the previous interactive session. After taking the storage lock and loading the store/preferences, `start_fresh` runs before the scheduler starts. It clears approvals, publishes minimal asset associations, archives protected records in `PreviousWork.json` with `session_archived`, and writes the cleanup intent before atomically saving an empty workflow. Disposable unchanged files are removed last. A crash between these writes can safely repeat the reset; no Photos method is called. Preferences are not reset.
+
+Archived entries are omitted from previous-work summaries and global write barriers. Their assets remain excluded through the association ledger, and archived paths are protected by manual history cleanup. Ordinary unfinished work without a Photos association becomes eligible as a fresh catalog item. A known non-uncertain pair can release its original's exclusion after its generated IDs disappear from the current catalog; unknown outcomes stay protected. The legacy `previous.inspect` backend API remains explicit-only compatibility support; the GUI has no restore-previous-work controls.
+
+The frontend passes its launch time and optional `--service-request` ID to the backend. Startup removes older queued Service JSON requests and the consumer independently ignores them. The Service passes its exact request ID through `open --args`, preserving a new invocation that launches the app. Requests written after the current app launch are also accepted. Native Photos-operation protocol 1 is unchanged.
+
 Normal root: `~/Library/Application Support/CamPresso/`.
 
 | Path | Ownership / contents |
 | --- | --- |
 | `preferences.json` | Library path, setup acknowledgments, presets and retained legacy preferences. |
-| `workflow.json` | Version 4 jobs; sole writer is Python. |
+| `workflow.json` | Version 4 current-session jobs; reset to empty before startup scheduling. Sole writer is Python. |
+| `PreviousWork.json`, `asset_links.json` | Quiet safety archive and minimal Photos associations; not a resumable queue. |
 | `.app.lock` | Held by backend or installer, not both. |
 | `NativeJournals/<operation-id>.json` | Native write intent, generation, exact IDs, expected properties, hash and confirmed result. |
 | `NativeWork/<job>/<generation>/` | App-managed compressed/rendered media only. |
@@ -175,7 +183,7 @@ Normal root: `~/Library/Application Support/CamPresso/`.
 
 `NativeStore` reads strictly: corrupt objects/unknown versions/invalid identities fail without discarding records. Stage transitions use temporary sibling files, fsync and atomic replace. Swift journal writes additionally fsync their parent directory. Jobs retain source/result IDs, source/result sizes, generation, expected media, versions, output hash/fingerprint, operation history, decision and legacy record/journal evidence. Approvals are never restored across launches.
 
-Version-3 migration backs up state/preferences first. Completed pairs remain excluded from new compression. Confirmed imported results become pending reviews. Older local-only results become Awaiting import and require an explicit action; changed/missing verification records cannot be imported. Interrupted Photos writes become Needs attention. Interrupted preparation/encoding becomes Paused, with no automatic import. External-file records are preserved as legacy history.
+Version-3 migration backs up state/preferences first and normalizes old stages without replaying writes. Startup then archives/reset these records under the fresh-session policy above. Completed pairs remain recognized, imported copies stay in Photos, local-only results are not imported, and uncertain writes retain their evidence. External-file records are archived without deleting external media.
 
 Cleanup is restricted to known app-created filenames in NativeWork, excluding symlinks, external files and Photos bundles. Changed tracked files and unresolved operations are retained. Safe results are removed after confirmed import or close and requested again through Photos for comparison. Recovery bytes/reasons are visible in Details. Unchanged tracked outputs/backups in known app-owned legacy roots can be released after confirmed review/import. Legacy files outside these roots remain intact; the native release does not sweep arbitrary old workspaces. Photos' own cache is not app-managed storage.
 
@@ -204,8 +212,8 @@ The installer records its ownership/phase in `installation.json`, refuses unreco
 
 Additive protocol-1 methods are `history.previewCleanup`, `history.clear` and `previous.inspect`, with native `storage.status`. Preview returns a one-use token, record count, byte estimate and protected count. Confirmation requires the same workflow revision and an idle backend/native host. Both current and previous storage locks are held during confirmed cleanup. Once a previous review is resolved, a later cleanup may release its unchanged tracked recovery files at their original paths. The backend publishes identity/retained-file manifests and a cleanup intent before removing job records or bytes. `cleanup_pending.json` retains failed removals for retry; `retained_files.json` records changed/external/unverified paths for visibility. Only unchanged regular files under recognized app-owned media roots are disposable; source references, hard links, symlinks and Photos bundles are protected.
 
-`PreviousWork.json` records the original root/journal/job and whether it was restored. Native inspection accepts a previous-work ID and reads only the journal recorded in that manifest, checking library/source/generation. It makes no Photos writes. Restoring a verified pair clears approvals and returns it to Review; incomplete/uncertain evidence stays in Recovery. Uncertain previous writes block new Photos imports/decisions until inspection, while bounded download/encoding work can continue. A restored item’s historical journal remains unchanged. This is independent of ordinary version-3-to-4 workflow migration, retained for older helper compatibility.
+`PreviousWork.json` records the original root/journal/job, whether it was explicitly restored, and the quiet session-archive flag. Native inspection compatibility accepts a previous-work ID and reads only its recorded journal, checking library/source/generation. It makes no Photos writes. The normal GUI never invokes this path on reopening. Current-session uncertain operations still pause Photos writes; archived uncertainty instead protects only the associated assets, allowing unrelated current-session work to continue. Historical journals remain unchanged.
 
 The Service is **CamPresso — Compress to 1080p**. Its identifier is `local.silvio.campresso.convert1080service`; request protocol 1 is unchanged. The installer creates a fresh venv rather than moving the old environment. It removes only previous app/Service bundles with expected bundle identifiers after publishing the new installation. Legacy recovery roots are retained; unrelated user files and Photos assets are never deleted by installation or history cleanup.
 
-Brand source and deterministic export instructions are in the [branding guide](BRANDING.md). The build bundles the mark PNG and ICNS before signing. Package source distributions include the Swift asset exporter and brand files.
+Brand source and deterministic export instructions are in the [branding guide](BRANDING.md). The build bundles both mark PNG variants and ICNS before signing. Package source distributions include the Swift asset exporter and brand files.

@@ -10,6 +10,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict
 import json
 import logging
+import math
 from pathlib import Path
 import queue
 import re
@@ -26,6 +27,7 @@ from .history import History, delete_preview_files, protected
 from .photos_catalog import scan_library, resolve_library
 from .state_store import StateFile
 from .storage_cleanup import StorageLock
+from .session_reset import discard_old_requests, start_fresh
 from .workflow_logic import file_matches, require_system_library
 
 
@@ -103,7 +105,9 @@ class Transport:
 
 
 class WorkflowController:
-    def __init__(self, data, transport):
+    def __init__(self, data, transport, launch_request=None, session_started_at=None):
+        self.session_started_at = session_started_at if session_started_at is not None else time.time()
+        self.launch_request = launch_request
         self.data = Path(data).expanduser().resolve()
         self.data.mkdir(parents=True, exist_ok=True)
         self.storage_lock = StorageLock(self.data)
@@ -140,9 +144,8 @@ class WorkflowController:
         self.last_requests = 0
         self.run_ids = set()
         self.scan_cancel = threading.Event()
-        for job in self.store.jobs.values():
-            if job['state'] not in ('Needs attention', 'Awaiting import'):
-                self.cleanup_job(job, discard=True)
+        start_fresh(self.store, self.history)
+        discard_old_requests(self.data, self.session_started_at, launch_request)
         self.scheduler = threading.Thread(target=self.run, name='workflow-scheduler', daemon=True)
         self.scheduler.start()
 
@@ -225,6 +228,11 @@ class WorkflowController:
         for link in self.history.links:
             if link['library'] != self.library or link['source_id'] in active_sources:
                 continue
+            if (link.get('pending') and link.get('uncertain') is False and catalog.get(link['source_id'])
+                    and not any(identifier in catalog for identifier in link.get('generated_ids', []))):
+                # A manually removed known copy does not leave the original
+                # permanently blocked. No Photos write or old job is retried.
+                continue
             ids = set(link.get('generated_ids', [])) | {link['source_id']}
             present = next((row for row in rows if row['id'] in ids), None)
             survivor = link.get('result_id') if link.get('decision') == 'keep' else link['source_id']
@@ -233,9 +241,9 @@ class WorkflowController:
             if candidate:
                 present = self.row(candidate)
             if present:
-                present.update(state='Previous work' if link.get('pending') else
+                present.update(state='Protected' if link.get('pending') else
                                'Already compressed' if link.get('decision') == 'keep' else 'Original kept',
-                               excluded=True, detail='History cleared; asset association retained for safety.')
+                               excluded=True, detail='An earlier Photos copy or operation is recorded. No previous job will resume; manage these copies in Photos.')
                 rows.append(present)
         return rows
 
@@ -604,7 +612,7 @@ class WorkflowController:
             return
         self.last_requests = time.monotonic()
         directory = self.data / 'Requests'
-        if not directory.is_dir():
+        if not directory.is_dir() or directory.is_symlink():
             return
         # A Service never supplies deletion approval. Requests wait for setup.
         try:
@@ -615,6 +623,8 @@ class WorkflowController:
             try:
                 if path.is_symlink() or path.stat().st_size > 131072 or not re.fullmatch(r'[0-9a-f]{32}', path.stem):
                     raise ValueError('Invalid Service request file.')
+                if path.stem != self.launch_request and path.stat().st_mtime < self.session_started_at:
+                    continue
                 request = read_strict(path)
                 from .photos_service import selected_ids
                 if request.get('version') != 1 or request.get('action') != 'convert1080':
@@ -688,7 +698,7 @@ class WorkflowController:
                 if self.stopping:
                     self.transport.send(dict(type='event', event='shutdownReady'))
                 else:
-                    self.transport.send(dict(type='event', event='fatal', message=self.write_fault or 'Workflow stopped unexpectedly. Reopen to inspect recovery.'))
+                    self.transport.send(dict(type='event', event='fatal', message=self.write_fault or 'Workflow stopped unexpectedly. Reopen the app to start a fresh session.'))
 
     def stop(self, closing=False):
         with self.lock:
@@ -937,7 +947,13 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--data-dir', type=Path, default=Path.home()/'Library'/'Application Support'/'CamPresso')
     parser.add_argument('--stdio', action='store_true')
+    parser.add_argument('--service-request')
+    parser.add_argument('--session-started-at', type=float)
     options = parser.parse_args(argv)
+    if options.session_started_at is not None and (not math.isfinite(options.session_started_at) or options.session_started_at <= 0):
+        parser.error('Invalid session launch time.')
+    if options.service_request is not None and not re.fullmatch(r'[a-f0-9]{32}', options.service_request):
+        parser.error('Invalid Service launch identity.')
     if any(part.lower().endswith('.photoslibrary') for part in options.data_dir.resolve().parts):
         raise RuntimeError('Application data must be outside the Photos library.')
     options.data_dir.mkdir(parents=True, exist_ok=True)
@@ -945,7 +961,7 @@ def main(argv=None):
                         format='%(asctime)s %(threadName)s %(message)s')
     transport = Transport()
     try:
-        controller = WorkflowController(options.data_dir, transport)
+        controller = WorkflowController(options.data_dir, transport, options.service_request, options.session_started_at)
     except Exception as error:
         transport.send(dict(type='event', event='fatal', message=str(error)))
         return 1
